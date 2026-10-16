@@ -26,10 +26,19 @@ const USERS: Record<number, { name: string; role: string; badge: string }> = {
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
+const FALLBACK_CASES_DATA: Record<string, any> = {
+  '1': { id: 1, case_number: 'FIR-2026-111', title: 'State v. K. Malhotra — Insider Data Exfiltration & Trade Secret Theft', status: 'Sealed', is_sealed: true, documents: [] },
+  '2': { id: 2, case_number: 'FIR-2026-105', title: 'Operation PhantomLocker — Double-Extortion Ransomware on Cloud Infrastructure', status: 'Sealed', is_sealed: true, documents: [] },
+  '3': { id: 3, case_number: 'FIR-2026-331', title: 'Operation DarkNexus — Multi-Vector SIM Swap & Financial Extortion Ring', status: 'Open', is_sealed: false, documents: [] },
+  '4': { id: 4, case_number: 'INC-2026-300', title: 'FinTech Payment Gateway Token Compromise & Money Mule Network', status: 'Sealed', is_sealed: true, documents: [] },
+  '5': { id: 5, case_number: 'FIR-2026-113', title: 'Deepfake CEO Impersonation & Unauthorized Wire-Transfer Fraud', status: 'Open', is_sealed: false, documents: [] },
+  '6': { id: 6, case_number: 'INC-2026/CYB/901', title: 'Critical Infrastructure SCADA Network Intrusion & Sabotage', status: 'Open', is_sealed: false, documents: [] },
+};
+
 export default function CaseDetails() {
   const { id } = useParams();
-  const [caseData, setCaseData]       = useState<any>(null);
-  const [loading, setLoading]         = useState(true);
+  const [caseData, setCaseData]       = useState<any>(FALLBACK_CASES_DATA[String(id)] || null);
+  const [loading, setLoading]         = useState(!FALLBACK_CASES_DATA[String(id)]);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [sealing, setSealing]         = useState(false);
   const [docType, setDocType]         = useState('FIR');
@@ -63,32 +72,48 @@ export default function CaseDetails() {
     return token ? { Authorization: `Bearer ${token}` } : {};
   };
 
-    const fetchArtifacts = async () => {
+  const fetchArtifacts = async () => {
     try {
+      if (!process.env.NEXT_PUBLIC_API_URL && typeof window !== 'undefined' && window.location.protocol === 'https:') return;
       const res = await fetch(`${API}/cases/${id}/artifacts/`, { headers: getHeaders() });
-      if (res.ok) setArtifacts(await res.json());
-    } catch (err) { console.error(err); }
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) setArtifacts(data);
+      }
+    } catch (err) { console.warn(err); }
   };
 
   const fetchTimeline = async () => {
     try {
+      if (!process.env.NEXT_PUBLIC_API_URL && typeof window !== 'undefined' && window.location.protocol === 'https:') return;
       const res = await fetch(`${API}/cases/${id}/timeline/`, { headers: getHeaders() });
-      if (res.ok) setTimelineEvents(await res.json());
-    } catch (err) { console.error(err); }
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) setTimelineEvents(data);
+      }
+    } catch (err) { console.warn(err); }
   };
 
   const fetchGraph = async () => {
     try {
+      if (!process.env.NEXT_PUBLIC_API_URL && typeof window !== 'undefined' && window.location.protocol === 'https:') return;
       const res = await fetch(`${API}/cases/${id}/graph/`, { headers: getHeaders() });
-      if (res.ok) setGraphData(await res.json());
-    } catch (err) { console.error(err); }
+      if (res.ok) {
+        const data = await res.json();
+        if (data && Array.isArray(data.nodes)) setGraphData(data);
+      }
+    } catch (err) { console.warn(err); }
   };
 
   const fetchHypotheses = async () => {
     try {
+      if (!process.env.NEXT_PUBLIC_API_URL && typeof window !== 'undefined' && window.location.protocol === 'https:') return;
       const res = await fetch(`${API}/cases/${id}/hypotheses/`, { headers: getHeaders() });
-      if (res.ok) setHypotheses(await res.json());
-    } catch (err) { console.error(err); }
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) setHypotheses(data);
+      }
+    } catch (err) { console.warn(err); }
   };
 
   const handleSeedSampleEvidence = async () => {
@@ -154,10 +179,32 @@ export default function CaseDetails() {
 
   const fetchCase = async () => {
     try {
+      if (!process.env.NEXT_PUBLIC_API_URL && typeof window !== 'undefined' && window.location.protocol === 'https:') {
+        if (!caseData && FALLBACK_CASES_DATA[String(id)]) {
+          setCaseData(FALLBACK_CASES_DATA[String(id)]);
+        }
+        return;
+      }
       const res = await fetch(`${API}/cases/${id}`, { headers: getHeaders() });
-      setCaseData(await res.json());
-    } catch (err) { console.error(err); }
-    finally { setLoading(false); }
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.case_number) setCaseData(data);
+        else if (!caseData && FALLBACK_CASES_DATA[String(id)]) {
+          setCaseData(FALLBACK_CASES_DATA[String(id)]);
+        }
+      } else {
+        if (!caseData && FALLBACK_CASES_DATA[String(id)]) {
+          setCaseData(FALLBACK_CASES_DATA[String(id)]);
+        }
+      }
+    } catch (err) {
+      console.warn('Backend unavailable, using fallback case info:', err);
+      if (!caseData && FALLBACK_CASES_DATA[String(id)]) {
+        setCaseData(FALLBACK_CASES_DATA[String(id)]);
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   const fetchImages = async (versionId: number) => {
@@ -260,8 +307,10 @@ export default function CaseDetails() {
   if (!caseData) return <div className="p-8 text-center text-red-500 font-bold">Case not found</div>;
 
     // Unify legacy documents and multi-source forensic artifacts into the exact timeline format
-  const unifiedDocs: any[] = [...(caseData.documents || [])];
-  artifacts.forEach(art => {
+  const safeArtifacts = Array.isArray(artifacts) ? artifacts : [];
+  const safeDocs = Array.isArray(caseData?.documents) ? caseData.documents : [];
+  const unifiedDocs: any[] = [...safeDocs];
+  safeArtifacts.forEach(art => {
     let dType = 'Physical Evidence';
     if (art.artifact_type === 'CHAT_EXPORT') dType = 'Chat Communications';
     else if (art.artifact_type === 'NETWORK_LOG') dType = 'Network & Firewall Logs';

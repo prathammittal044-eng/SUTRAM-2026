@@ -94,8 +94,17 @@ const DEFAULT_CASE_METADATA: Record<number, {
   },
 };
 
+const INITIAL_FALLBACK_CASES = [
+  { id: 1, case_number: "FIR-2026-111", title: "State v. K. Malhotra — Insider Data Exfiltration & Trade Secret Theft", status: "Sealed", is_sealed: true },
+  { id: 2, case_number: "FIR-2026-105", title: "Operation PhantomLocker — Double-Extortion Ransomware on Cloud Infrastructure", status: "Sealed", is_sealed: true },
+  { id: 3, case_number: "FIR-2026-331", title: "Operation DarkNexus — Multi-Vector SIM Swap & Financial Extortion Ring", status: "Open", is_sealed: false },
+  { id: 4, case_number: "INC-2026-300", title: "FinTech Payment Gateway Token Compromise & Money Mule Network", status: "Sealed", is_sealed: true },
+  { id: 5, case_number: "FIR-2026-113", title: "Deepfake CEO Impersonation & Unauthorized Wire-Transfer Fraud", status: "Open", is_sealed: false },
+  { id: 6, case_number: "INC-2026/CYB/901", title: "Critical Infrastructure SCADA Network Intrusion & Sabotage", status: "Open", is_sealed: false },
+];
+
 export default function CasesDashboard() {
-  const [cases, setCases] = useState([]);
+  const [cases, setCases] = useState<any[]>(INITIAL_FALLBACK_CASES);
   const [searchQuery, setSearchQuery] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [selectedSections, setSelectedSections] = useState<string[]>([]);
@@ -134,7 +143,11 @@ export default function CasesDashboard() {
       localStorage.setItem('sih_user', JSON.stringify(defaultUser));
       setCurrentUser(defaultUser);
     } else {
-      setCurrentUser(JSON.parse(userRaw));
+      try {
+        setCurrentUser(JSON.parse(userRaw));
+      } catch {
+        setCurrentUser({ id: 1, name: 'Sub-Inspector Sharma', role: 'Officer', badge: '9482A' });
+      }
     }
     fetchCases();
   }, []);
@@ -145,13 +158,27 @@ export default function CasesDashboard() {
     return token ? { Authorization: `Bearer ${token}` } : {};
   };
 
-  const fetchCases = () => {
+  const fetchCases = async () => {
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+    if (!apiUrl && typeof window !== 'undefined' && window.location.protocol === 'https:') {
+      // In production HTTPS without configured backend, avoid insecure HTTP calls and keep fallback cases
+      return;
+    }
     const token = typeof window !== 'undefined' ? localStorage.getItem('sih_token') : null;
-    fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/cases/`,
-      { headers: token ? { Authorization: `Bearer ${token}` } : {} })
-      .then(res => res.json())
-      .then(data => setCases(data))
-      .catch(err => console.error('Error fetching cases', err));
+    try {
+      const res = await fetch(`${apiUrl || 'http://localhost:8000'}/cases/`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      if (!res.ok) {
+        console.warn('Backend returned status:', res.status);
+        return;
+      }
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        setCases(data);
+      }
+    } catch (err) {
+      console.warn('Backend unreachable, displaying offline/fallback cases:', err);
+    }
   };
 
   const toggleSection = (s: string) => {
@@ -207,7 +234,9 @@ export default function CasesDashboard() {
     return stored[id] || DEFAULT_CASE_METADATA[id] || null;
   };
 
-  const filteredCases = cases.filter((c: any) => {
+  const safeCases = Array.isArray(cases) && cases.length > 0 ? cases : INITIAL_FALLBACK_CASES;
+
+  const filteredCases = safeCases.filter((c: any) => {
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
     const meta = getCaseMeta(c.id) || {};
@@ -263,16 +292,16 @@ export default function CasesDashboard() {
               </h3>
               <div>
                 <p className="text-xs text-zinc-400 mb-1">Total Registered Cases</p>
-                <p className="text-white font-bold text-3xl font-sans">{cases.length}</p>
+                <p className="text-white font-bold text-3xl font-sans">{safeCases.length}</p>
               </div>
               <div className="grid grid-cols-2 gap-3 pt-1">
                 <div className="bg-zinc-950/80 border border-zinc-800/80 p-3 rounded-lg">
                   <p className="text-[11px] text-emerald-400 font-medium">Active / Open</p>
-                  <p className="text-xl font-bold text-zinc-100 mt-1">{cases.filter((c: any) => !c.is_sealed).length}</p>
+                  <p className="text-xl font-bold text-zinc-100 mt-1">{safeCases.filter((c: any) => !c.is_sealed).length}</p>
                 </div>
                 <div className="bg-zinc-950/80 border border-zinc-800/80 p-3 rounded-lg">
                   <p className="text-[11px] text-zinc-400 font-medium">Sealed for Trial</p>
-                  <p className="text-xl font-bold text-zinc-400 mt-1">{cases.filter((c: any) => c.is_sealed).length}</p>
+                  <p className="text-xl font-bold text-zinc-400 mt-1">{safeCases.filter((c: any) => c.is_sealed).length}</p>
                 </div>
               </div>
             </div>
