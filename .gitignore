@@ -52,6 +52,8 @@ backend/*.db
 # OS Files
 # Scratch files and temporary test scripts in root
 *.txt
+!requirements.txt
+!backend/requirements.txt
 !sample_evidence/**
 !sample_evidence/*.txt
 sih_db.sqlite

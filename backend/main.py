@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from sqlalchemy.orm import Session
 import models, schemas
-from database import engine, get_db
+from database import engine, get_db, SessionLocal
 import hashlib
 import threading
 import blockchain_logger
@@ -175,15 +175,31 @@ models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Digital Evidence Locker API")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Support CORS for local dev, Vercel deployments (*.vercel.app), and custom domains
+allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "")
+if allowed_origins_env:
+    origins = [o.strip() for o in allowed_origins_env.split(",") if o.strip()]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+        ],
+        allow_origin_regex=r"^https:\/\/.*\.vercel\.app$",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
-UPLOAD_DIR = "uploads"
+UPLOAD_DIR = os.getenv("UPLOAD_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads"))
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # -------------------------------------------------------
@@ -1707,4 +1723,53 @@ def get_bsa_certificate_printable_html(case_id: int, user_id: int = 1, db: Sessi
     </body>
     </html>"""
     return HTMLResponse(content=html)
+
+
+# ------------------------------------------------------------------------------
+# Auto-Initialization on Startup (Self-healing for cloud deploys on Render)
+# ------------------------------------------------------------------------------
+@app.on_event("startup")
+def startup_event():
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    db = SessionLocal()
+    try:
+        # 1. Ensure default users exist
+        if db.query(models.User).count() == 0:
+            db.add_all([
+                models.User(id=1, username="sharma", role="Officer"),
+                models.User(id=2, username="vance", role="Officer"),
+                models.User(id=3, username="patel", role="Judge"),
+            ])
+            db.commit()
+
+        # 2. Ensure standard 6 cases exist
+        if db.query(models.Case).count() == 0:
+            default_cases = [
+                models.Case(id=1, case_number="FIR-2026-111", title="State v. K. Malhotra — Insider Data Exfiltration & Trade Secret Theft", status="Sealed", is_sealed=True, sealed_by=3),
+                models.Case(id=2, case_number="FIR-2026-105", title="Operation PhantomLocker — Double-Extortion Ransomware on Cloud Infrastructure", status="Sealed", is_sealed=True, sealed_by=3),
+                models.Case(id=3, case_number="FIR-2026-331", title="Operation DarkNexus — Multi-Vector SIM Swap & Financial Extortion Ring", status="Open", is_sealed=False),
+                models.Case(id=4, case_number="INC-2026-300", title="FinTech Payment Gateway Token Compromise & Money Mule Network", status="Sealed", is_sealed=True, sealed_by=3),
+                models.Case(id=5, case_number="FIR-2026-113", title="Deepfake CEO Impersonation & Unauthorized Wire-Transfer Fraud", status="Open", is_sealed=False),
+                models.Case(id=6, case_number="INC-2026/CYB/901", title="Critical Infrastructure SCADA Network Intrusion & Sabotage", status="Open", is_sealed=False),
+            ]
+            db.add_all(default_cases)
+            db.commit()
+
+            # Seed sample evidence, timeline, graph, and insights into all 6 cases
+            for cid in [1, 2, 3, 4, 5, 6]:
+                try:
+                    seed_sample_evidence_for_case(case_id=cid, user_id=1, db=db)
+                except Exception as e:
+                    print(f"[STARTUP] Could not seed Case {cid}: {e}")
+    except Exception as e:
+        print(f"[STARTUP] Error during initialization: {e}")
+    finally:
+        db.close()
+
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+
 

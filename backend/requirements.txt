@@ -1,5 +1,5 @@
-﻿fastapi
-uvicorn
+fastapi
+uvicorn[standard]
 sqlalchemy
 pydantic
 python-multipart
@@ -13,3 +13,9 @@ py-solc-x
 requests
 python-jose[cryptography]
 passlib[bcrypt]
+Pillow
+numpy
+scikit-learn
+networkx
+reportlab
+psycopg2-binary
