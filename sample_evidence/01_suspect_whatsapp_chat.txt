@@ -1,0 +1,9 @@
+[09/10/26, 14:10:05] +919876543210: Hello Mr. Rajesh Sharma. This is Inspector Vikram from Cyber Crime Bureau HQ New Delhi.
+[09/10/26, 14:10:45] Victim: Who is this? Why are you messaging me?
+[09/10/26, 14:11:20] +919876543210: A parcel in your name containing illegal contraband and foreign currency has been intercepted at Mumbai airport customs under Section 120B.
+[09/10/26, 14:12:10] Victim: Sir I have not ordered any parcel! This must be a misunderstanding!
+[09/10/26, 14:13:00] +919876543210: Arrest warrant has already been generated. If you want to avoid immediate arrest and public humiliation, you must deposit security clearance fees of Rs 85,000 immediately.
+[09/10/26, 14:14:15] +919876543210: Transfer immediately to Government Verification VPA: mule_account@okhdfcbank
+[09/10/26, 14:14:50] +919876543210: You have exactly 15 minutes. Send screenshot proof of payment here. If you contact family or police, officers are on standby at your address.
+[09/10/26, 14:18:30] Victim: Sir I have borrowed the money and transferred Rs 85,000 to mule_account@okhdfcbank. Please find the receipt attached.
+[09/10/26, 14:19:10] +919876543210: Received. Do not speak to anyone until clearance certificate is emailed to rajesh.sharma@gmail.com from legal.verify@gov-portal.org.

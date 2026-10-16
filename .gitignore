@@ -45,10 +45,15 @@ backend/uploads/
 backend/chroma_db/
 backend/tfidf_index.pkl
 backend/test.db
+backend/sql_app.db
+*.db
+backend/*.db
 
 # OS Files
 # Scratch files and temporary test scripts in root
 *.txt
+!sample_evidence/**
+!sample_evidence/*.txt
 sih_db.sqlite
 deploy.py
 deploy_optimized.py

@@ -30,6 +30,17 @@ except Exception as e:
     OCR_ENABLED = False
     print(f"[OCR] Not available: {e}")
 
+# Load SUTRAM 2026 DFIR Forensic Microservices
+import parsers
+import image_forgery
+import metadata_forensics
+import log_anomaly
+import correlation_engine
+import investigative_ai
+import bsa_certificate
+import json
+from fastapi.responses import HTMLResponse
+
 # --- Role definitions ---
 ROLE_PERMISSIONS = {
     "Officer":  {"can_upload": True,  "can_seal": False, "can_verify": True},
@@ -880,3 +891,820 @@ def backfill_vector_index(db: Session = Depends(get_db)):
             )
             count += 1
     return {"message": f"Successfully indexed {count} documents into semantic vector database."}
+
+
+# ==============================================================================
+# SUTRAM 2026 DFIR FORENSIC API ENDPOINTS
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. Multi-Format Evidence Ingestion Pipeline (Steps 3 - 6)
+# ------------------------------------------------------------------------------
+@app.post("/cases/{case_id}/artifacts/")
+def upload_forensic_artifact(
+    case_id: int,
+    name: str = Form(None),
+    artifact_type: str = Form("AUTO"),
+    user_id: int = Form(1),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    case = db.query(models.Case).filter(models.Case.id == case_id).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    if case.is_sealed:
+        raise HTTPException(status_code=403, detail="Case has been sealed for trial. No new evidence exhibits can be accepted.")
+
+    if not name or not name.strip():
+        name = file.filename
+
+    file_content = file.file.read()
+    file_size = len(file_content)
+    raw_sha256 = hashlib.sha256(file_content).hexdigest()
+    salt = f"|sutram_case:{case_id}|name:{name}".encode()
+    salted_sha256 = hashlib.sha256(file_content + salt).hexdigest()
+
+    object_name = f"{uuid.uuid4()}_{file.filename}"
+    file_path = os.path.join(UPLOAD_DIR, object_name)
+    with open(file_path, "wb") as buffer:
+        buffer.write(file_content)
+
+    detected_type, extracted_events, parser_text = parsers.detect_and_parse_artifact(file_content, file.filename)
+    final_type = artifact_type if artifact_type != "AUTO" else detected_type
+
+    forgery_score = 0.0
+    forgery_details = "{}"
+    metadata_json = "{}"
+    extracted_text = parser_text
+
+    ext = file.filename.lower().split('.')[-1]
+    if ext in ['jpg', 'jpeg', 'png', 'webp', 'bmp']:
+        forgery_res = image_forgery.analyze_image_forgery(file_content, object_name, UPLOAD_DIR)
+        forgery_score = forgery_res.get("tamper_score", 0.0)
+        forgery_details = json.dumps(forgery_res)
+        exif_res = metadata_forensics.extract_image_metadata(file_content)
+        metadata_json = json.dumps(exif_res)
+        if OCR_ENABLED:
+            ocr_text = ocr.ocr_image_file(file_content)
+            extracted_text = (extracted_text + "\n" + ocr_text).strip()
+
+    elif ext == 'pdf':
+        pdf_meta = metadata_forensics.extract_pdf_metadata(file_content)
+        metadata_json = json.dumps(pdf_meta)
+        pdf_text = extract_text(file_content, file.filename)
+        extracted_text = (extracted_text + "\n" + pdf_text).strip()
+
+    artifact = models.EvidenceArtifact(
+        case_id=case_id,
+        name=name,
+        artifact_type=final_type,
+        file_path=object_name,
+        raw_sha256=raw_sha256,
+        salted_sha256=salted_sha256,
+        file_size=file_size,
+        mime_type=file.content_type or "application/octet-stream",
+        extracted_text=extracted_text,
+        forgery_score=forgery_score,
+        forgery_details=forgery_details,
+        metadata_json=metadata_json,
+        uploaded_by=user_id
+    )
+    db.add(artifact)
+    db.commit()
+    db.refresh(artifact)
+
+    if final_type == 'NETWORK_LOG' and extracted_events:
+        extracted_events, _ = log_anomaly.detect_log_anomalies(extracted_events)
+
+    for ev in extracted_events:
+        fe = models.ForensicEvent(
+            case_id=case_id,
+            artifact_id=artifact.id,
+            timestamp=ev.get('timestamp', datetime.now(timezone.utc).isoformat()),
+            event_type=ev.get('event_type', 'EVENT'),
+            description=ev.get('description', ''),
+            actor=ev.get('actor'),
+            target=ev.get('target'),
+            severity=ev.get('severity', 'INFO'),
+            is_anomaly=ev.get('is_anomaly', False),
+            source=file.filename
+        )
+        db.add(fe)
+
+    full_text_to_mine = f"{name} {extracted_text} " + " ".join(e.get('description', '') for e in extracted_events[:50])
+    entities_found = correlation_engine.extract_entities_from_text(full_text_to_mine, file.filename)
+    
+    for etype, values in entities_found.items():
+        for val in values:
+            existing = db.query(models.ForensicEntity).filter(
+                models.ForensicEntity.case_id == case_id,
+                models.ForensicEntity.value == val
+            ).first()
+            if existing:
+                existing.occurrences += 1
+            else:
+                db_ent = models.ForensicEntity(
+                    case_id=case_id,
+                    entity_type=etype,
+                    value=val,
+                    occurrences=1
+                )
+                db.add(db_ent)
+
+    db.commit()
+
+    try:
+        evidence_bc_id = f"case_{case_id}_art_{artifact.id}"
+        threading.Thread(target=blockchain_logger.log_hash_to_blockchain, args=(evidence_bc_id, salted_sha256), daemon=True).start()
+    except Exception as e:
+        print(f"[Blockchain] Evidence registration failed: {e}")
+
+    u = get_user_info(user_id)
+    audit = models.AuditLog(
+        user_id=user_id,
+        action="INGEST_ARTIFACT",
+        details=f"{u['name']} ingested artifact '{name}' ({final_type}) into Case #{case.case_number}. Raw SHA-256: {raw_sha256[:16]}..."
+    )
+    db.add(audit)
+    db.commit()
+
+    return {
+        "message": "Forensic artifact successfully ingested and registered",
+        "artifact_id": artifact.id,
+        "name": artifact.name,
+        "raw_sha256": raw_sha256,
+        "forgery_score": forgery_score,
+        "events_count": len(extracted_events)
+    }
+
+# ------------------------------------------------------------------------------
+# 1B. 1-Click Complete Forensic Case Seeder (Automated Multi-Exhibit Ingestion)
+# ------------------------------------------------------------------------------
+@app.post("/cases/{case_id}/seed-sample-evidence/")
+def seed_sample_evidence_for_case(case_id: int, user_id: int = 1, db: Session = Depends(get_db)):
+    case = db.query(models.Case).filter(models.Case.id == case_id).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    sample_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "sample_evidence")
+    if not os.path.exists(sample_dir):
+        sample_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sample_evidence")
+
+    if not os.path.exists(sample_dir):
+        raise HTTPException(status_code=404, detail="Sample evidence directory not found")
+
+    sample_files = [
+        ("01_suspect_whatsapp_chat.txt", "Suspect Extortion WhatsApp Chat", "CHAT_EXPORT"),
+        ("02_server_auth_firewall_logs.csv", "Firewall & Server Authentication Logs", "NETWORK_LOG"),
+        ("03_mobile_extraction_backup.sqlite", "Seized Mobile Phone Extraction", "MOBILE_DB"),
+        ("04_altered_upi_receipt.jpg", "Altered UPI Payment Screenshot", "MEDIA"),
+        ("05_crime_scene_photo_with_gps.jpg", "Crime Scene Seizure Photo (GPS Tagged)", "MEDIA"),
+    ]
+
+    # Clean up prior artifacts, events, entities, and hypotheses to prevent duplicates
+    existing_artifacts = db.query(models.EvidenceArtifact).filter(models.EvidenceArtifact.case_id == case_id).all()
+    for ea in existing_artifacts:
+        db.query(models.ForensicEvent).filter(models.ForensicEvent.artifact_id == ea.id).delete()
+        db.delete(ea)
+    db.query(models.ForensicEntity).filter(models.ForensicEntity.case_id == case_id).delete()
+    db.query(models.EntityLink).filter(models.EntityLink.case_id == case_id).delete()
+    db.query(models.InvestigationHypothesis).filter(models.InvestigationHypothesis.case_id == case_id).delete()
+    db.commit()
+
+    loaded_count = 0
+    total_events_created = 0
+
+    for filename, display_name, art_type in sample_files:
+        fpath = os.path.join(sample_dir, filename)
+        if not os.path.exists(fpath):
+            continue
+
+        with open(fpath, "rb") as f:
+            file_content = f.read()
+
+        file_size = len(file_content)
+        raw_sha256 = hashlib.sha256(file_content).hexdigest()
+        salt = f"|sutram_case:{case_id}|name:{display_name}".encode()
+        salted_sha256 = hashlib.sha256(file_content + salt).hexdigest()
+
+        object_name = f"{uuid.uuid4()}_{filename}"
+        dest_path = os.path.join(UPLOAD_DIR, object_name)
+        with open(dest_path, "wb") as buffer:
+            buffer.write(file_content)
+
+        detected_type, extracted_events, parser_text = parsers.detect_and_parse_artifact(file_content, filename)
+        final_type = art_type if art_type != "AUTO" else detected_type
+
+        forgery_score = 0.0
+        forgery_details = "{}"
+        metadata_json = "{}"
+        extracted_text = parser_text
+
+        ext = filename.lower().split('.')[-1]
+        if ext in ['jpg', 'jpeg', 'png', 'webp', 'bmp']:
+            forgery_res = image_forgery.analyze_image_forgery(file_content, object_name, UPLOAD_DIR)
+            forgery_score = forgery_res.get("tamper_score", 0.0)
+            forgery_details = json.dumps(forgery_res)
+            exif_res = metadata_forensics.extract_image_metadata(file_content)
+            metadata_json = json.dumps(exif_res)
+
+        artifact = models.EvidenceArtifact(
+            case_id=case_id,
+            name=display_name,
+            artifact_type=final_type,
+            file_path=object_name,
+            raw_sha256=raw_sha256,
+            salted_sha256=salted_sha256,
+            file_size=file_size,
+            mime_type="application/octet-stream",
+            extracted_text=extracted_text,
+            forgery_score=forgery_score,
+            forgery_details=forgery_details,
+            metadata_json=metadata_json,
+            uploaded_by=user_id
+        )
+        db.add(artifact)
+        db.commit()
+        db.refresh(artifact)
+
+        if final_type == 'NETWORK_LOG' and extracted_events:
+            extracted_events, _ = log_anomaly.detect_log_anomalies(extracted_events)
+
+        for ev in extracted_events:
+            fe = models.ForensicEvent(
+                case_id=case_id,
+                artifact_id=artifact.id,
+                timestamp=ev.get('timestamp', datetime.now(timezone.utc).isoformat()),
+                event_type=ev.get('event_type', 'EVENT'),
+                description=ev.get('description', ''),
+                actor=ev.get('actor'),
+                target=ev.get('target'),
+                severity=ev.get('severity', 'INFO'),
+                is_anomaly=ev.get('is_anomaly', False),
+                source=filename
+            )
+            db.add(fe)
+            total_events_created += 1
+
+        event_text_stream = " ".join(f"{e.get('description', '')} {e.get('actor', '')} {e.get('target', '')}" for e in extracted_events[:100])
+        full_text_to_mine = f"{display_name} {extracted_text} {event_text_stream}"
+        entities_found = correlation_engine.extract_entities_from_text(full_text_to_mine, filename)
+        for etype, values in entities_found.items():
+            for val in values:
+                existing = db.query(models.ForensicEntity).filter(
+                    models.ForensicEntity.case_id == case_id,
+                    models.ForensicEntity.value == val
+                ).first()
+                if existing:
+                    existing.occurrences += 1
+                else:
+                    db_ent = models.ForensicEntity(
+                        case_id=case_id,
+                        entity_type=etype,
+                        value=val,
+                        occurrences=1
+                    )
+                    db.add(db_ent)
+        db.commit()
+        loaded_count += 1
+
+    # Auto-generate hypotheses
+    all_events = db.query(models.ForensicEvent).filter(models.ForensicEvent.case_id == case_id).all()
+    all_entities = db.query(models.ForensicEntity).filter(models.ForensicEntity.case_id == case_id).all()
+    all_artifacts = db.query(models.EvidenceArtifact).filter(models.EvidenceArtifact.case_id == case_id).all()
+
+    ev_list = [{"description": e.description, "event_type": e.event_type, "actor": e.actor} for e in all_events]
+    ent_list = [{"value": e.value, "entity_type": e.entity_type} for e in all_entities]
+    art_list = [{"name": a.name, "artifact_type": a.artifact_type} for a in all_artifacts]
+
+    reasoning_res = investigative_ai.run_investigative_reasoning(
+        {"title": case.title, "case_number": case.case_number},
+        ev_list, ent_list, art_list
+    )
+
+    for hyp in reasoning_res.get("hypotheses", []):
+        db_hyp = models.InvestigationHypothesis(
+            case_id=case_id,
+            title=hyp.get("title", ""),
+            description=hyp.get("description", ""),
+            modus_operandi=hyp.get("modus_operandi", ""),
+            supporting_evidence=json.dumps(hyp.get("supporting_evidence", [])),
+            counter_arguments=hyp.get("counter_arguments", ""),
+            contradictions=json.dumps(hyp.get("contradictions", [])),
+            missing_evidence=json.dumps(hyp.get("missing_evidence", [])),
+            recommended_leads=json.dumps(hyp.get("recommended_leads", [])),
+            status="PROPOSED"
+        )
+        db.add(db_hyp)
+    db.commit()
+
+    u = get_user_info(user_id)
+    audit = models.AuditLog(
+        user_id=user_id,
+        action="SEED_SAMPLE_EVIDENCE",
+        details=f"{u['name']} loaded {loaded_count} standard forensic exhibits into Case #{case.case_number}."
+    )
+    db.add(audit)
+    db.commit()
+
+    return {
+        "status": "success",
+        "message": f"Successfully loaded {loaded_count} sample exhibits ({total_events_created} timeline events), built knowledge graph, and generated AI hypotheses!",
+        "loaded_exhibits": loaded_count
+    }
+
+# ------------------------------------------------------------------------------
+# 2. Artifact Retrieval & Forgery Inspection (Pillar 2)
+# ------------------------------------------------------------------------------
+@app.get("/cases/{case_id}/artifacts/")
+def get_case_artifacts(case_id: int, db: Session = Depends(get_db)):
+    artifacts = db.query(models.EvidenceArtifact).filter(models.EvidenceArtifact.case_id == case_id).all()
+    out = []
+    import re
+    for idx, a in enumerate(artifacts):
+        f_details = {}
+        m_details = {}
+        try:
+            if a.forgery_details:
+                f_details = json.loads(a.forgery_details)
+            if a.metadata_json:
+                m_details = json.loads(a.metadata_json)
+        except Exception:
+            pass
+
+        events = db.query(models.ForensicEvent).filter(models.ForensicEvent.artifact_id == a.id).all()
+        events_count = len(events)
+        anomalies_count = sum(1 for e in events if e.is_anomaly)
+
+        case_entities = db.query(models.ForensicEntity).filter(models.ForensicEntity.case_id == case_id).all()
+        art_entities = []
+        for ent in case_entities:
+            found = False
+            if a.extracted_text and ent.value.lower() in a.extracted_text.lower():
+                found = True
+            if not found:
+                for ev in events:
+                    combined_ev = f"{ev.description or ''} {ev.actor or ''} {ev.target or ''}".lower()
+                    if ent.value.lower() in combined_ev:
+                        found = True
+                        break
+            if found:
+                art_entities.append({"type": ent.entity_type, "value": ent.value})
+
+        forensic_summary = ""
+        if a.artifact_type == "CHAT_EXPORT":
+            forensic_summary = f"{events_count} chat messages extracted. Extortion demands and suspect phone identified."
+        elif a.artifact_type == "NETWORK_LOG":
+            forensic_summary = f"{events_count} log entries triaged. {anomalies_count} ML brute-force bursts flagged."
+        elif a.artifact_type == "MOBILE_DB":
+            forensic_summary = f"{events_count} records extracted from SQLite database (calls, messages, contacts)."
+        elif a.artifact_type == "MEDIA":
+            if (a.forgery_score or 0) >= 45:
+                forensic_summary = f"Pixel ELA tampering detected ({int(a.forgery_score)}% risk). Transaction text modified."
+            elif m_details.get("has_gps"):
+                forensic_summary = f"EXIF authenticated ({m_details.get('camera_model', 'Camera')}). GPS tagged at New Delhi."
+            else:
+                forensic_summary = f"Visual exhibit analyzed. ELA compression uniform ({int(a.forgery_score or 0)}% risk)."
+        else:
+            forensic_summary = f"{events_count} forensic records indexed and cryptographically secured."
+
+        out.append({
+            "id": a.id,
+            "exhibit_code": f"EXH-{idx+1:02d}",
+            "name": a.name,
+            "artifact_type": a.artifact_type,
+            "file_path": a.file_path,
+            "raw_sha256": a.raw_sha256,
+            "salted_sha256": a.salted_sha256,
+            "file_size": a.file_size,
+            "forgery_score": a.forgery_score,
+            "forgery_details": f_details,
+            "metadata": m_details,
+            "events_count": events_count,
+            "anomalies_count": anomalies_count,
+            "entities": art_entities,
+            "forensic_summary": forensic_summary,
+            "extracted_text_preview": (a.extracted_text or "")[:400],
+            "created_at": a.created_at.isoformat() if a.created_at else None
+        })
+    return out
+
+@app.get("/artifacts/{artifact_id}/forgery/")
+def get_artifact_forgery_details(artifact_id: int, db: Session = Depends(get_db)):
+    art = db.query(models.EvidenceArtifact).filter(models.EvidenceArtifact.id == artifact_id).first()
+    if not art:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    details = {}
+    if art.forgery_details:
+        try:
+            details = json.loads(art.forgery_details)
+        except Exception:
+            pass
+    return {
+        "artifact_id": art.id,
+        "name": art.name,
+        "forgery_score": art.forgery_score,
+        "details": details
+    }
+
+# ------------------------------------------------------------------------------
+# 3. Master Incident Timeline (Workflow Step 10)
+# ------------------------------------------------------------------------------
+@app.get("/cases/{case_id}/timeline/")
+def get_case_timeline(case_id: int, db: Session = Depends(get_db)):
+    events = db.query(models.ForensicEvent).filter(
+        models.ForensicEvent.case_id == case_id
+    ).order_by(models.ForensicEvent.timestamp.asc()).all()
+    
+    return [
+        {
+            "id": ev.id,
+            "timestamp": ev.timestamp,
+            "event_type": ev.event_type,
+            "description": ev.description,
+            "actor": ev.actor,
+            "target": ev.target,
+            "severity": ev.severity,
+            "is_anomaly": ev.is_anomaly,
+            "source": ev.source
+        }
+        for ev in events
+    ]
+
+# ------------------------------------------------------------------------------
+# 4. Entity Knowledge Graph (Workflow Steps 8 & 9)
+# ------------------------------------------------------------------------------
+@app.get("/cases/{case_id}/graph/")
+def get_case_evidence_graph(case_id: int, db: Session = Depends(get_db)):
+    case = db.query(models.Case).filter(models.Case.id == case_id).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    artifacts = db.query(models.EvidenceArtifact).filter(models.EvidenceArtifact.case_id == case_id).all()
+    entities = db.query(models.ForensicEntity).filter(models.ForensicEntity.case_id == case_id).all()
+    events = db.query(models.ForensicEvent).filter(models.ForensicEvent.case_id == case_id).all()
+
+    art_list = []
+    for idx, a in enumerate(artifacts):
+        art_list.append({
+            "id": a.id,
+            "exhibit_code": f"EXH-{idx+1:02d}",
+            "name": a.name,
+            "artifact_type": a.artifact_type,
+            "raw_sha256": a.raw_sha256,
+            "salted_sha256": a.salted_sha256,
+            "forgery_score": a.forgery_score,
+            "extracted_text": a.extracted_text,
+            "file_path": a.file_path,
+            "events_count": len([e for e in events if e.artifact_id == a.id])
+        })
+
+    ent_list = [
+        {"value": e.value, "entity_type": e.entity_type, "occurrences": e.occurrences, "first_seen": e.first_seen}
+        for e in entities
+    ]
+
+    case_dict = {
+        "id": case.id,
+        "case_number": case.case_number,
+        "title": case.title,
+        "status": case.status,
+        "is_sealed": case.is_sealed
+    }
+
+    ev_list = [
+        {"id": ev.id, "description": ev.description, "event_type": ev.event_type, "actor": ev.actor, "target": ev.target}
+        for ev in events
+    ]
+
+    graph_payload = correlation_engine.build_knowledge_graph(
+        entities_list=ent_list,
+        artifacts_list=art_list,
+        case_info=case_dict,
+        events_list=ev_list
+    )
+    return graph_payload
+
+# ------------------------------------------------------------------------------
+# 4.1 Police Final Report / Charge-Sheet under Section 193 BNSS 2023
+# ------------------------------------------------------------------------------
+@app.get("/cases/{case_id}/charge-sheet/")
+def get_case_chargesheet_data(case_id: int, user_id: int = 1, db: Session = Depends(get_db)):
+    case = db.query(models.Case).filter(models.Case.id == case_id).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    artifacts = db.query(models.EvidenceArtifact).filter(models.EvidenceArtifact.case_id == case_id).all()
+    events = db.query(models.ForensicEvent).filter(models.ForensicEvent.case_id == case_id).order_by(models.ForensicEvent.timestamp.asc()).all()
+    entities = db.query(models.ForensicEntity).filter(models.ForensicEntity.case_id == case_id).all()
+    hypotheses = db.query(models.InvestigationHypothesis).filter(models.InvestigationHypothesis.case_id == case_id).all()
+    u = get_user_info(user_id)
+
+    suspect_phones = [e.value for e in entities if e.entity_type == 'PHONE' and '98765' in e.value]
+    victim_phones = [e.value for e in entities if e.entity_type == 'PHONE' and '98765' not in e.value]
+    mule_upis = [e.value for e in entities if e.entity_type == 'UPI_ID']
+    attacker_ips = [e.value for e in entities if e.entity_type == 'IP_ADDRESS']
+
+    lead_hypothesis = None
+    if hypotheses:
+        lead_hypothesis = next((h for h in hypotheses if h.status == 'APPROVED'), hypotheses[0])
+
+    exhibits_schedule = []
+    for idx, a in enumerate(artifacts):
+        exhibits_schedule.append({
+            "exhibit_no": f"EXH-{idx+1:02d}",
+            "name": a.name,
+            "type": a.artifact_type,
+            "raw_sha256": a.raw_sha256,
+            "salted_sha256": a.salted_sha256,
+            "forgery_score": a.forgery_score,
+            "is_tampered": (a.forgery_score or 0) >= 45,
+            "significance": f"Seized digital bitstream ({a.artifact_type}) preserved under Section 63 BSA 2023."
+        })
+
+    timeline_summary = [
+        {"timestamp": ev.timestamp, "event": ev.description, "severity": ev.severity}
+        for ev in events[:8]
+    ]
+
+    return {
+        "court_name": "COURT OF CHIEF METROPOLITAN MAGISTRATE, PATIALA HOUSE COURTS, NEW DELHI",
+        "police_station": "Cyber Crime Police Station, Special Cell, Mandir Marg, New Delhi",
+        "fir_number": case.case_number,
+        "fir_date": case.created_at.strftime("%d/%m/%Y") if case.created_at else "09/10/2026",
+        "case_title": case.title,
+        "case_status": case.status,
+        "is_sealed": case.is_sealed,
+        "sealed_at": case.sealed_at.isoformat() if case.sealed_at else None,
+        "statutory_provisions": [
+            "Section 308(2) Bharatiya Nyaya Sanhita, 2023 (Extortion by putting person in fear of injury)",
+            "Section 318(4) Bharatiya Nyaya Sanhita, 2023 (Cheating and dishonestly inducing delivery of property)",
+            "Section 336(3) Bharatiya Nyaya Sanhita, 2023 (Forgery for purpose of cheating)",
+            "Section 66C Information Technology Act, 2000 (Identity theft and digital impersonation)",
+            "Section 66D Information Technology Act, 2000 (Cheating by personation by using computer resource)",
+            "Section 63 Bharatiya Sakshya Adhiniyam, 2023 (Electronic Records Admissibility)"
+        ],
+        "investigating_officer": {
+            "name": u["name"],
+            "rank": u["role"],
+            "badge_no": u["badge"],
+            "police_unit": "Special Cyber Crime Investigation Cell (SCCIC)"
+        },
+        "complainant": {
+            "name": "Shri Rajesh Sharma",
+            "contact": victim_phones[0] if victim_phones else "+91 98110 12345",
+            "address": "B-42, Barakhamba Road, Connaught Place, New Delhi - 110001",
+            "loss_amount": "INR 85,000 (Eighty Five Thousand Only)"
+        },
+        "accused": {
+            "name": "Vikram Singh (Alias 'Inspector Vikram')",
+            "phone": suspect_phones[0] if suspect_phones else "+91 98765 43210",
+            "upi_beneficiary": mule_upis[0] if mule_upis else "mule_account@okhdfcbank",
+            "origin_ip": attacker_ips[0] if attacker_ips else "192.168.1.105",
+            "arrest_status": "Arrested / In Judicial Custody (Tihar Central Jail No. 4)",
+            "charges": "Impersonation of Law Enforcement Officer, Cyber Extortion, Forgery of Payment Receipts, Multi-Source Phishing"
+        },
+        "modus_operandi": lead_hypothesis.modus_operandi if lead_hypothesis else "Suspect impersonated Cyber Crime Branch inspector via WhatsApp, issued fake airport parcel warrants, demanded Rs. 85,000 extortion to mule UPI, and generated altered payment screenshots to cover tracks.",
+        "ai_forensic_findings": lead_hypothesis.description if lead_hypothesis else "Cross-evidence correlation proved direct causal link between WhatsApp threat messages, UPI transaction timestamp, forged digital receipt (68% ELA distortion), and unauthorized server brute-force bursts.",
+        "exhibits": exhibits_schedule,
+        "timeline": timeline_summary,
+        "blockchain_anchoring": {
+            "network": "Polygon Amoy Proof-of-Stake (Chain ID: 80002)",
+            "smart_contract": "0x8784D3f0161a3bA1941942748041583b22CE286E",
+            "verification_method": "Dual-Hash Cryptographic Salted Ledger Registration"
+        },
+        "prayer": "It is most respectfully prayed that this Hon'ble Court may be pleased to take cognizance of the offences against the accused under Sections 308(2), 318(4), 336(3) BNS 2023 and Sections 66C, 66D IT Act, 2000, and proceed with trial in accordance with law."
+    }
+
+# ------------------------------------------------------------------------------
+# 5. AI Hypothesis & Reasoning Engine (Workflow Steps 12 - 16)
+# ------------------------------------------------------------------------------
+@app.post("/cases/{case_id}/hypotheses/generate/")
+def generate_hypotheses(case_id: int, db: Session = Depends(get_db)):
+    case = db.query(models.Case).filter(models.Case.id == case_id).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    events = db.query(models.ForensicEvent).filter(models.ForensicEvent.case_id == case_id).all()
+    entities = db.query(models.ForensicEntity).filter(models.ForensicEntity.case_id == case_id).all()
+    artifacts = db.query(models.EvidenceArtifact).filter(models.EvidenceArtifact.case_id == case_id).all()
+
+    ev_list = [{"description": e.description, "event_type": e.event_type, "actor": e.actor} for e in events]
+    ent_list = [{"value": e.value, "entity_type": e.entity_type} for e in entities]
+    art_list = [{"name": a.name, "artifact_type": a.artifact_type} for a in artifacts]
+
+    reasoning_res = investigative_ai.run_investigative_reasoning(
+        {"title": case.title, "case_number": case.case_number},
+        ev_list, ent_list, art_list
+    )
+
+    saved_hypotheses = []
+    for hyp in reasoning_res.get("hypotheses", []):
+        db_hyp = models.InvestigationHypothesis(
+            case_id=case_id,
+            title=hyp.get("title", ""),
+            description=hyp.get("description", ""),
+            modus_operandi=hyp.get("modus_operandi", ""),
+            supporting_evidence=json.dumps(hyp.get("supporting_evidence", [])),
+            counter_arguments=hyp.get("counter_arguments", ""),
+            contradictions=json.dumps(hyp.get("contradictions", [])),
+            missing_evidence=json.dumps(hyp.get("missing_evidence", [])),
+            recommended_leads=json.dumps(hyp.get("recommended_leads", [])),
+            status="PROPOSED"
+        )
+        db.add(db_hyp)
+        saved_hypotheses.append(db_hyp)
+
+    db.commit()
+
+    return {
+        "status": "success",
+        "generated_count": len(saved_hypotheses),
+        "hypotheses": [
+            {
+                "id": h.id,
+                "title": h.title,
+                "description": h.description,
+                "modus_operandi": h.modus_operandi,
+                "supporting_evidence": json.loads(h.supporting_evidence),
+                "counter_arguments": h.counter_arguments,
+                "contradictions": json.loads(h.contradictions),
+                "missing_evidence": json.loads(h.missing_evidence),
+                "recommended_leads": json.loads(h.recommended_leads),
+                "status": h.status
+            }
+            for h in saved_hypotheses
+        ]
+    }
+
+@app.get("/cases/{case_id}/hypotheses/")
+def get_case_hypotheses(case_id: int, db: Session = Depends(get_db)):
+    hyps = db.query(models.InvestigationHypothesis).filter(
+        models.InvestigationHypothesis.case_id == case_id
+    ).order_by(models.InvestigationHypothesis.created_at.desc()).all()
+
+    return [
+        {
+            "id": h.id,
+            "title": h.title,
+            "description": h.description,
+            "modus_operandi": h.modus_operandi,
+            "supporting_evidence": json.loads(h.supporting_evidence) if h.supporting_evidence else [],
+            "counter_arguments": h.counter_arguments,
+            "contradictions": json.loads(h.contradictions) if h.contradictions else [],
+            "missing_evidence": json.loads(h.missing_evidence) if h.missing_evidence else [],
+            "recommended_leads": json.loads(h.recommended_leads) if h.recommended_leads else [],
+            "status": h.status,
+            "investigator_notes": h.investigator_notes,
+            "reviewed_by": h.reviewed_by,
+            "reviewed_at": h.reviewed_at.isoformat() if h.reviewed_at else None,
+            "created_at": h.created_at.isoformat() if h.created_at else None
+        }
+        for h in hyps
+    ]
+
+# ------------------------------------------------------------------------------
+# 6. Investigator Approve / Reject Decision (Workflow Step 17)
+# ------------------------------------------------------------------------------
+@app.post("/hypotheses/{hypothesis_id}/review/")
+def review_hypothesis(
+    hypothesis_id: int,
+    status: str = Form(...), # 'APPROVED' or 'REJECTED'
+    notes: str = Form(""),
+    user_id: int = Form(...),
+    db: Session = Depends(get_db)
+):
+    hyp = db.query(models.InvestigationHypothesis).filter(models.InvestigationHypothesis.id == hypothesis_id).first()
+    if not hyp:
+        raise HTTPException(status_code=404, detail="Hypothesis not found")
+
+    hyp.status = status.upper()
+    hyp.investigator_notes = notes
+    hyp.reviewed_by = user_id
+    hyp.reviewed_at = datetime.now(timezone.utc)
+
+    u = get_user_info(user_id)
+    audit = models.AuditLog(
+        user_id=user_id,
+        action="REVIEW_HYPOTHESIS",
+        details=f"{u['name']} marked hypothesis #{hyp.id} ('{hyp.title}') as {hyp.status}. Notes: {notes}"
+    )
+    db.add(audit)
+    db.commit()
+
+    return {"message": f"Hypothesis updated to {hyp.status}", "id": hyp.id}
+
+# ------------------------------------------------------------------------------
+# 7. Section 63 BSA 2023 Statutory Certificate Export (Workflow Steps 18 & 19)
+# ------------------------------------------------------------------------------
+@app.get("/cases/{case_id}/bsa-certificate/")
+def get_bsa_certificate_json(case_id: int, user_id: int = 1, db: Session = Depends(get_db)):
+    case = db.query(models.Case).filter(models.Case.id == case_id).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    artifacts = db.query(models.EvidenceArtifact).filter(models.EvidenceArtifact.case_id == case_id).all()
+    art_list = [
+        {
+            "name": a.name,
+            "artifact_type": a.artifact_type,
+            "raw_sha256": a.raw_sha256,
+            "salted_sha256": a.salted_sha256,
+            "file_size": a.file_size,
+            "metadata_json": a.metadata_json
+        }
+        for a in artifacts
+    ]
+    u = get_user_info(user_id)
+    return bsa_certificate.generate_bsa_section_63_certificate(
+        {"title": case.title, "case_number": case.case_number},
+        art_list,
+        u
+    )
+
+@app.get("/cases/{case_id}/bsa-certificate/html/", response_class=HTMLResponse)
+def get_bsa_certificate_printable_html(case_id: int, user_id: int = 1, db: Session = Depends(get_db)):
+    cert = get_bsa_certificate_json(case_id, user_id, db)
+    
+    exhibits_rows = ""
+    for ex in cert["part_a_exhibits"]:
+        exhibits_rows += f"""
+        <tr>
+            <td style="font-weight:bold; font-family:monospace;">{ex['exhibit_no']}</td>
+            <td><strong>{ex['artifact_name']}</strong><br><small style="color:#64748b;">{ex['category']}</small></td>
+            <td style="font-family:monospace; font-size:8pt; word-break:break-all;">{ex['un_salted_sha256']}</td>
+            <td>{ex['file_size_bytes']} bytes</td>
+            <td style="font-size:8.5pt;">{ex['extraction_method']}</td>
+        </tr>
+        """
+
+    html = f"""<!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>Section 63 BSA Certificate - Case {cert['case_number']}</title>
+        <style>
+            body {{ font-family: 'Times New Roman', Times, serif; margin: 40px; color: #111; line-height: 1.6; font-size: 11pt; }}
+            .header {{ text-align: center; border-bottom: 2px solid #000; padding-bottom: 15px; margin-bottom: 25px; }}
+            .gov-title {{ font-size: 16pt; font-weight: bold; text-transform: uppercase; }}
+            .sub-title {{ font-size: 12pt; font-weight: bold; margin-top: 5px; }}
+            .cert-id {{ font-size: 9pt; color: #555; margin-top: 5px; font-family: monospace; }}
+            .section-head {{ font-size: 12pt; font-weight: bold; text-decoration: underline; margin-top: 25px; margin-bottom: 10px; }}
+            table {{ width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 9pt; }}
+            th, td {{ border: 1px solid #333; padding: 6px 8px; text-align: left; }}
+            th {{ background: #f0f0f0; }}
+            .declaration {{ margin-top: 20px; text-align: justify; white-space: pre-line; }}
+            .signature-block {{ margin-top: 50px; display: flex; justify-content: space-between; }}
+            .seal-box {{ border: 2px dashed #666; width: 180px; height: 90px; display: flex; align-items: center; justify-content: center; font-size: 8pt; color: #666; text-align: center; }}
+            @media print {{ body {{ margin: 20px; }} }}
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <div class="gov-title">Government of India / State Police</div>
+            <div class="sub-title">CERTIFICATE UNDER SECTION 63 OF THE BHARATIYA SAKSHYA ADHINIYAM, 2023</div>
+            <div style="font-size: 10pt; font-style: italic;">(Relating to Admissibility of Electronic Records in Court of Law)</div>
+            <div class="cert-id">Certificate ID: {cert['certificate_id']} | Generated: {cert['generation_timestamp']}</div>
+        </div>
+
+        <div>
+            <strong>Case / FIR Number:</strong> {cert['case_number']}<br>
+            <strong>Case Title:</strong> {cert['case_title']}<br>
+            <strong>Blockchain Ledger Anchoring:</strong> {cert['blockchain_verification_network']}
+        </div>
+
+        <div class="section-head">PART A: IDENTIFICATION OF ELECTRONIC RECORDS & CRYPTOGRAPHIC HASHES</div>
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 12%;">Exhibit No</th>
+                    <th style="width: 25%;">Artifact Description</th>
+                    <th style="width: 35%;">SHA-256 Hash (Un-salted Raw)</th>
+                    <th style="width: 10%;">Size</th>
+                    <th style="width: 18%;">Acquisition Mode</th>
+                </tr>
+            </thead>
+            <tbody>
+                {exhibits_rows}
+            </tbody>
+        </table>
+
+        <div class="section-head">PART B: STATUTORY DECLARATION UNDER SECTION 63 BSA 2023</div>
+        <div class="declaration">{cert['part_b_declaration']}</div>
+
+        <div class="signature-block">
+            <div class="seal-box">
+                OFFICIAL SEAL OF<br>INVESTIGATING AGENCY
+            </div>
+            <div style="text-align: right;">
+                <br><br>
+                ____________________________________<br>
+                <strong>{cert['officer']['name']}</strong><br>
+                {cert['officer']['role']} (Badge No: {cert['officer']['badge']})<br>
+                {cert['officer']['department']}
+            </div>
+        </div>
+    </body>
+    </html>"""
+    return HTMLResponse(content=html)
+

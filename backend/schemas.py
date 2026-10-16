@@ -64,3 +64,83 @@ class AuditLog(BaseModel):
     class Config:
         from_attributes = True
 
+# Forensic Schemas
+class EvidenceArtifact(BaseModel):
+    id: int
+    case_id: int
+    name: str
+    artifact_type: str
+    file_path: str
+    raw_sha256: str
+    salted_sha256: str
+    file_size: int
+    mime_type: str
+    extracted_text: Optional[str] = None
+    forgery_score: float = 0.0
+    forgery_details: Optional[str] = None
+    metadata_json: Optional[str] = None
+    uploaded_by: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class ForensicEvent(BaseModel):
+    id: int
+    case_id: int
+    artifact_id: Optional[int] = None
+    timestamp: str
+    event_type: str
+    description: str
+    actor: Optional[str] = None
+    target: Optional[str] = None
+    severity: str = "INFO"
+    is_anomaly: bool = False
+    source: str
+
+    class Config:
+        from_attributes = True
+
+class ForensicEntity(BaseModel):
+    id: int
+    case_id: int
+    entity_type: str
+    value: str
+    occurrences: int
+    first_seen: datetime
+
+    class Config:
+        from_attributes = True
+
+class EntityLink(BaseModel):
+    id: int
+    case_id: int
+    source_entity: str
+    target_entity: str
+    relation_type: str
+    evidence_source: str
+    confidence: float
+
+    class Config:
+        from_attributes = True
+
+class InvestigationHypothesis(BaseModel):
+    id: int
+    case_id: int
+    title: str
+    description: str
+    modus_operandi: str
+    supporting_evidence: str
+    counter_arguments: str
+    contradictions: str
+    missing_evidence: str
+    recommended_leads: str
+    status: str
+    investigator_notes: Optional[str] = None
+    reviewed_by: Optional[int] = None
+    reviewed_at: Optional[datetime] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
