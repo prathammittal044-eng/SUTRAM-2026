@@ -141,25 +141,42 @@ export default function CasesDashboard() {
 
   const fetchCases = async () => {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL;
-    if (!apiUrl && typeof window !== 'undefined' && window.location.protocol === 'https:') {
-      // In production HTTPS without configured backend, avoid insecure HTTP calls and keep fallback cases
-      return;
-    }
-    const token = typeof window !== 'undefined' ? localStorage.getItem('sih_token') : null;
-    try {
-      const res = await fetch(`${apiUrl || 'http://localhost:8000'}/cases/`,
-        { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-      if (!res.ok) {
-        console.warn('Backend returned status:', res.status);
-        return;
+    let backendCases: any[] = [];
+    if (apiUrl || (typeof window !== 'undefined' && window.location.hostname === 'localhost')) {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('sih_token') : null;
+      try {
+        const res = await fetch(`${apiUrl || 'http://localhost:8000'}/cases/`,
+          { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            backendCases = data;
+          }
+        }
+      } catch (err) {
+        console.warn('Backend unreachable, using local/fallback cases:', err);
       }
-      const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        setCases(data);
-      }
-    } catch (err) {
-      console.warn('Backend unreachable, displaying offline/fallback cases:', err);
     }
+
+    let customCases: any[] = [];
+    if (typeof window !== 'undefined') {
+      try {
+        customCases = JSON.parse(localStorage.getItem('sutram_custom_cases') || '[]');
+      } catch {}
+    }
+
+    const baseList = backendCases.length > 0 ? backendCases : INITIAL_FALLBACK_CASES;
+    const seenIds = new Set();
+    const seenNumbers = new Set();
+    const merged: any[] = [];
+    for (const c of [...customCases, ...baseList]) {
+      if (!seenIds.has(c.id) && !seenNumbers.has(c.case_number)) {
+        seenIds.add(c.id);
+        seenNumbers.add(c.case_number);
+        merged.push(c);
+      }
+    }
+    setCases(merged);
   };
 
   const handleDeleteCase = async (caseId: number, caseNumber: string) => {
@@ -179,6 +196,10 @@ export default function CasesDashboard() {
       const stored = JSON.parse(localStorage.getItem('case_metadata') || '{}');
       delete stored[String(caseId)];
       localStorage.setItem('case_metadata', JSON.stringify(stored));
+
+      const customList = JSON.parse(localStorage.getItem('sutram_custom_cases') || '[]');
+      const updatedCustom = customList.filter((x: any) => x.id !== caseId);
+      localStorage.setItem('sutram_custom_cases', JSON.stringify(updatedCustom));
     } catch {}
   };
 
@@ -190,43 +211,71 @@ export default function CasesDashboard() {
     e.preventDefault();
     const fd = new FormData(e.target);
 
+    const caseNumber = (fd.get('case_number') as string)?.trim() || `FIR-2026-${Math.floor(100 + Math.random() * 900)}`;
+    const title = (fd.get('title') as string)?.trim() || 'Untitled Investigation';
+
     const meta = {
-      title: fd.get('title') as string,
-      crime_type: fd.get('crime_type') as string,
-      incident_date: fd.get('incident_date') as string,
-      location: fd.get('location') as string,
-      complainant_name: fd.get('complainant_name') as string,
-      complainant_phone: fd.get('complainant_phone') as string,
-      accused_name: fd.get('accused_name') as string,
-      ipc_sections: selectedSections,
-      description: fd.get('description') as string,
+      title,
+      crime_type: (fd.get('crime_type') as string) || 'Cyber Crime / Fraud',
+      incident_date: (fd.get('incident_date') as string) || new Date().toISOString().split('T')[0],
+      location: (fd.get('location') as string) || 'State Cyber Crime Cell',
+      complainant_name: (fd.get('complainant_name') as string) || 'State Complainant',
+      complainant_phone: (fd.get('complainant_phone') as string) || '',
+      accused_name: (fd.get('accused_name') as string) || 'Unidentified Suspect',
+      ipc_sections: selectedSections.length > 0 ? selectedSections : ['IT Act 66D – Cheating by Personation'],
+      description: (fd.get('description') as string) || '',
     };
 
-    const payload = {
-      case_number: fd.get('case_number') as string,
-      title: meta.title,
+    const newCase = {
+      id: Date.now(),
+      case_number: caseNumber,
+      title: title,
+      status: 'Open',
+      is_sealed: false,
+      created_at: new Date().toISOString(),
     };
 
+    // Attempt backend sync in background
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/cases/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...getHeaders() },
-        body: JSON.stringify(payload),
-      });
-      if (res.ok) {
-        const created = await res.json();
-        const stored = JSON.parse(localStorage.getItem('case_metadata') || '{}');
-        stored[created.id] = meta;
-        localStorage.setItem('case_metadata', JSON.stringify(stored));
-
-        setShowModal(false);
-        setSelectedSections([]);
-        fetchCases();
-      } else {
-        const err = await res.json();
-        alert(`Error: ${err.detail}`);
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+      if (apiUrl || (typeof window !== 'undefined' && window.location.hostname === 'localhost')) {
+        const token = typeof window !== 'undefined' ? localStorage.getItem('sih_token') : null;
+        const res = await fetch(`${apiUrl || 'http://localhost:8000'}/cases/`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {})
+          },
+          body: JSON.stringify({ case_number: caseNumber, title }),
+        });
+        if (res.ok) {
+          const backendCase = await res.json();
+          if (backendCase && backendCase.id) {
+            newCase.id = backendCase.id;
+          }
+        }
       }
-    } catch { alert('Network error.'); }
+    } catch (err) {
+      console.warn('Backend sync failed, case saved to secure client storage:', err);
+    }
+
+    // Persist case metadata locally
+    try {
+      const stored = JSON.parse(localStorage.getItem('case_metadata') || '{}');
+      stored[newCase.id] = meta;
+      localStorage.setItem('case_metadata', JSON.stringify(stored));
+    } catch {}
+
+    // Persist case in custom cases list
+    try {
+      const customList = JSON.parse(localStorage.getItem('sutram_custom_cases') || '[]');
+      const filtered = customList.filter((x: any) => x.id !== newCase.id && x.case_number !== newCase.case_number);
+      localStorage.setItem('sutram_custom_cases', JSON.stringify([newCase, ...filtered]));
+    } catch {}
+
+    setCases(prev => [newCase, ...prev.filter(x => x.id !== newCase.id && x.case_number !== newCase.case_number)]);
+    setShowModal(false);
+    setSelectedSections([]);
   };
 
   const getCaseMeta = (id: number) => {

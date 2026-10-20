@@ -31,9 +31,44 @@ const FALLBACK_CASES_DATA: Record<string, any> = {
   '2': { id: 2, case_number: 'INC-2026-518', title: 'Operation BlackByte — Corporate Cloud Ransomware & AWS S3 Exfiltration', status: 'Sealed', is_sealed: true, documents: [] },
 };
 
+const getFallbackOrLocalCase = (caseId: string) => {
+  if (FALLBACK_CASES_DATA[caseId]) return FALLBACK_CASES_DATA[caseId];
+  if (typeof window !== 'undefined') {
+    try {
+      const customList = JSON.parse(localStorage.getItem('sutram_custom_cases') || '[]');
+      const found = customList.find((c: any) => String(c.id) === String(caseId));
+      if (found) {
+        return {
+          id: found.id,
+          case_number: found.case_number,
+          title: found.title,
+          status: found.status || 'Open',
+          is_sealed: !!found.is_sealed,
+          created_at: found.created_at,
+          documents: []
+        };
+      }
+      const storedMeta = JSON.parse(localStorage.getItem('case_metadata') || '{}');
+      const meta = storedMeta[caseId];
+      if (meta) {
+        return {
+          id: caseId,
+          case_number: `CASE-${caseId.slice(-4)}`,
+          title: meta.title || 'Active Investigation Docket',
+          status: 'Open',
+          is_sealed: false,
+          created_at: meta.incident_date || new Date().toISOString(),
+          documents: []
+        };
+      }
+    } catch {}
+  }
+  return null;
+};
+
 export default function CaseDetails() {
   const { id } = useParams();
-  const [caseData, setCaseData]       = useState<any>(FALLBACK_CASES_DATA[String(id)] || null);
+  const [caseData, setCaseData]       = useState<any>(null);
   const [loading, setLoading]         = useState(!FALLBACK_CASES_DATA[String(id)]);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [sealing, setSealing]         = useState(false);
@@ -175,29 +210,23 @@ export default function CaseDetails() {
 
   const fetchCase = async () => {
     try {
+      const localFallback = getFallbackOrLocalCase(String(id));
       if (!process.env.NEXT_PUBLIC_API_URL && typeof window !== 'undefined' && window.location.protocol === 'https:') {
-        if (!caseData && FALLBACK_CASES_DATA[String(id)]) {
-          setCaseData(FALLBACK_CASES_DATA[String(id)]);
-        }
+        if (localFallback) setCaseData(localFallback);
         return;
       }
       const res = await fetch(`${API}/cases/${id}`, { headers: getHeaders() });
       if (res.ok) {
         const data = await res.json();
         if (data && data.case_number) setCaseData(data);
-        else if (!caseData && FALLBACK_CASES_DATA[String(id)]) {
-          setCaseData(FALLBACK_CASES_DATA[String(id)]);
-        }
+        else if (localFallback) setCaseData(localFallback);
       } else {
-        if (!caseData && FALLBACK_CASES_DATA[String(id)]) {
-          setCaseData(FALLBACK_CASES_DATA[String(id)]);
-        }
+        if (localFallback) setCaseData(localFallback);
       }
     } catch (err) {
-      console.warn('Backend unavailable, using fallback case info:', err);
-      if (!caseData && FALLBACK_CASES_DATA[String(id)]) {
-        setCaseData(FALLBACK_CASES_DATA[String(id)]);
-      }
+      console.warn('Backend unavailable, using local case info:', err);
+      const localFallback = getFallbackOrLocalCase(String(id));
+      if (localFallback) setCaseData(localFallback);
     } finally {
       setLoading(false);
     }
