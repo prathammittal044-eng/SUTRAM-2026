@@ -9,10 +9,21 @@ import { getLocalChargeSheet } from '@/lib/clientForensics';
 
 interface ChargeSheetModalProps {
   caseId: number | string;
+  caseData?: any;
+  meta?: any;
+  exhibits?: any[];
+  currentUser?: any;
   onClose: () => void;
 }
 
-export default function ChargeSheetModal({ caseId, onClose }: ChargeSheetModalProps) {
+export default function ChargeSheetModal({
+  caseId,
+  caseData,
+  meta,
+  exhibits,
+  currentUser,
+  onClose
+}: ChargeSheetModalProps) {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -21,7 +32,7 @@ export default function ChargeSheetModal({ caseId, onClose }: ChargeSheetModalPr
 
   useEffect(() => {
     fetchChargeSheet();
-  }, [caseId]);
+  }, [caseId, caseData, meta, exhibits, currentUser]);
 
   const fetchChargeSheet = async () => {
     setLoading(true);
@@ -41,7 +52,7 @@ export default function ChargeSheetModal({ caseId, onClose }: ChargeSheetModalPr
     } catch (err: any) {
       console.warn('Backend unavailable, using verified local charge-sheet:', err);
     }
-    setData(getLocalChargeSheet(caseId));
+    setData(getLocalChargeSheet(caseId, caseData, meta, exhibits, currentUser));
     setLoading(false);
   };
 
@@ -274,8 +285,8 @@ export default function ChargeSheetModal({ caseId, onClose }: ChargeSheetModalPr
               <div className="pt-8 grid grid-cols-2 gap-8 font-sans text-xs">
                 <div className="border-2 border-dashed border-slate-300 rounded-xl p-4 flex flex-col items-center justify-center text-center text-slate-400 min-h-[100px]">
                   <Scale className="w-6 h-6 mb-1 opacity-50" />
-                  <span className="font-bold text-[10px] uppercase">Official Seal of Cyber Crime Bureau</span>
-                  <span className="text-[9px]">Mandir Marg, New Delhi</span>
+                  <span className="font-bold text-[10px] uppercase">Official Seal of Investigating Agency</span>
+                  <span className="text-[9px]">{data.police_station || 'Cyber Crime Police Station'}</span>
                 </div>
 
                 <div className="text-right space-y-1 flex flex-col justify-end">

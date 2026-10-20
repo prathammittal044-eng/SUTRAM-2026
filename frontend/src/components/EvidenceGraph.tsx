@@ -3,7 +3,8 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import {
   Network, Filter, ZoomIn, ZoomOut, RefreshCw, Info, ShieldAlert,
   Phone, CreditCard, Globe, Mail, User, FileText, Search, Download,
-  Maximize2, Eye, ShieldCheck, MapPin, Layers, CornerDownRight, X, ExternalLink
+  Maximize2, Eye, ShieldCheck, MapPin, Layers, CornerDownRight, X, ExternalLink,
+  Sparkles
 } from 'lucide-react';
 
 interface Node {
@@ -49,9 +50,10 @@ interface EvidenceGraphProps {
   };
   onOpenExhibitInspector?: (artifact: any) => void;
   caseTitle?: string;
+  onSynthesizeGraph?: () => void;
 }
 
-export default function EvidenceGraph({ data, onOpenExhibitInspector, caseTitle }: EvidenceGraphProps) {
+export default function EvidenceGraph({ data, onOpenExhibitInspector, caseTitle, onSynthesizeGraph }: EvidenceGraphProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -684,6 +686,16 @@ export default function EvidenceGraph({ data, onOpenExhibitInspector, caseTitle 
           >
             <Download className="w-3.5 h-3.5" /> Export PNG
           </button>
+
+          {onSynthesizeGraph && (
+            <button
+              onClick={onSynthesizeGraph}
+              className="bg-[#FF4E18] hover:bg-[#e04515] text-white font-bold text-xs px-3.5 py-1.5 rounded-full flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
+              title="Synthesize and map knowledge graph from uploaded exhibits and metadata"
+            >
+              <Sparkles className="w-3.5 h-3.5" /> Re-Synthesize Graph
+            </button>
+          )}
         </div>
       </div>
 
@@ -721,6 +733,24 @@ export default function EvidenceGraph({ data, onOpenExhibitInspector, caseTitle 
         ref={containerRef}
         className="relative flex-1 min-h-[580px] w-full bg-black overflow-hidden select-none"
       >
+        {activeNodes.length === 0 && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center z-20 bg-zinc-950/80 backdrop-blur-sm">
+            <Network className="w-12 h-12 text-zinc-600 mb-3" />
+            <h4 className="text-white text-sm font-bold mb-1">No Knowledge Graph Entities Mapped Yet</h4>
+            <p className="text-zinc-400 text-xs max-w-md mb-4 font-sans">
+              Correlate suspects, victims, phone endpoints, and uploaded forensic exhibits into an interactive crime matrix.
+            </p>
+            {onSynthesizeGraph && (
+              <button
+                onClick={onSynthesizeGraph}
+                className="bg-[#FF4E18] hover:bg-[#e04515] text-white font-bold text-xs px-4 py-2 rounded-lg flex items-center gap-2 cursor-pointer shadow-md transition-all"
+              >
+                <Sparkles className="w-4 h-4" /> Synthesize Knowledge Graph
+              </button>
+            )}
+          </div>
+        )}
+
         <canvas
           ref={canvasRef}
           onMouseDown={handleMouseDown}

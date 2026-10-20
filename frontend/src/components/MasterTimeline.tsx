@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Clock, AlertTriangle, AlertCircle, CheckCircle2, ShieldAlert, Filter, Search, Terminal, MessageSquare, DollarSign, FileCode } from 'lucide-react';
+import { Clock, AlertTriangle, AlertCircle, CheckCircle2, ShieldAlert, Filter, Search, Terminal, MessageSquare, DollarSign, FileCode, Sparkles } from 'lucide-react';
 
 interface ForensicEvent {
   id: number;
@@ -17,9 +17,10 @@ interface ForensicEvent {
 
 interface MasterTimelineProps {
   events: ForensicEvent[];
+  onSynthesize?: () => void;
 }
 
-export default function MasterTimeline({ events }: MasterTimelineProps) {
+export default function MasterTimeline({ events, onSynthesize }: MasterTimelineProps) {
   const [filterSeverity, setFilterSeverity] = useState<string>('ALL');
   const [search, setSearch] = useState('');
 
@@ -99,6 +100,16 @@ export default function MasterTimeline({ events }: MasterTimelineProps) {
               </button>
             ))}
           </div>
+
+          {onSynthesize && (
+            <button
+              onClick={onSynthesize}
+              className="bg-[#FF4E18] hover:bg-[#e04515] text-white text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all shadow-sm cursor-pointer ml-1"
+              title="Re-synthesize timeline events from uploaded exhibits and metadata"
+            >
+              <Sparkles className="w-3.5 h-3.5" /> Re-Synthesize
+            </button>
+          )}
         </div>
       </div>
 
@@ -107,7 +118,15 @@ export default function MasterTimeline({ events }: MasterTimelineProps) {
         {filtered.length === 0 ? (
           <div className="p-12 text-center text-zinc-500">
             <Clock className="w-10 h-10 mx-auto mb-2 opacity-30 text-zinc-400" />
-            <p className="font-medium text-xs">No timeline events match the filter.</p>
+            <p className="font-medium text-xs mb-3">No timeline events recorded yet or filter matched 0 items.</p>
+            {onSynthesize && (
+              <button
+                onClick={onSynthesize}
+                className="bg-[#FF4E18] hover:bg-[#e04515] text-white text-xs font-bold px-4 py-2 rounded-lg inline-flex items-center gap-2 cursor-pointer shadow-md"
+              >
+                <Sparkles className="w-3.5 h-3.5" /> Synthesize Timeline from Exhibits
+              </button>
+            )}
           </div>
         ) : (
           <div className="relative border-l border-zinc-800 ml-4 space-y-5">

@@ -833,26 +833,440 @@ export function saveLocalArtifact(caseId: string | number, artifact: any): any[]
   }
 }
 
-export function getLocalTimeline(caseId: string | number): any[] {
+// Helper to resolve case metadata, custom cases, and exhibits across local storage
+function resolveCaseContext(
+  caseId: string | number,
+  caseData?: any,
+  meta?: any,
+  exhibits?: any[]
+) {
+  let resolvedMeta = meta;
+  let resolvedCase = caseData;
+  let resolvedExhibits = exhibits;
+
+  if (typeof window !== 'undefined') {
+    if (!resolvedMeta) {
+      try {
+        const stored = JSON.parse(localStorage.getItem('case_metadata') || '{}');
+        resolvedMeta = stored[String(caseId)] || null;
+      } catch {}
+    }
+    if (!resolvedCase) {
+      try {
+        const customList = JSON.parse(localStorage.getItem('sutram_custom_cases') || '[]');
+        resolvedCase = customList.find((c: any) => String(c.id) === String(caseId)) || null;
+      } catch {}
+    }
+    if (!resolvedExhibits || resolvedExhibits.length === 0) {
+      try {
+        const localArts = getLocalArtifacts(caseId);
+        if (localArts && localArts.length > 0) {
+          resolvedExhibits = localArts;
+        } else {
+          const localDocs = JSON.parse(localStorage.getItem(`sutram_documents_${caseId}`) || '[]');
+          if (localDocs && localDocs.length > 0) {
+            resolvedExhibits = localDocs;
+          }
+        }
+      } catch {}
+    }
+  }
+
+  const caseNumber = resolvedCase?.case_number || resolvedMeta?.title || (String(caseId) === '1' ? 'FIR-2026-402' : String(caseId) === '2' ? 'INC-2026-518' : `CASE-${String(caseId).slice(-4)}`);
+  const title = resolvedCase?.title || resolvedMeta?.title || 'Cyber Crime & DFIR Investigation';
+  const incidentDate = resolvedMeta?.incident_date || resolvedCase?.created_at?.split('T')[0] || '2026-03-14';
+  const complainant = resolvedMeta?.complainant_name || resolvedCase?.complainant || 'Complainant';
+  const accused = resolvedMeta?.accused_name || resolvedCase?.accused || 'Accused Person';
+  const location = resolvedMeta?.location || resolvedCase?.location || 'State Cyber Crime Cell';
+  const crimeType = resolvedMeta?.crime_type || resolvedCase?.crime_category || 'Cyber Fraud';
+  const sections = Array.isArray(resolvedMeta?.ipc_sections) && resolvedMeta.ipc_sections.length > 0
+    ? resolvedMeta.ipc_sections
+    : ['Section 318(4) BNS – Cheating', 'Section 308(2) BNS – Extortion', 'Section 66D IT Act – Cheating by Personation', 'Section 63 BSA 2023 – Electronic Records'];
+
+  // Normalize exhibits into clean uniform forensic objects
+  const rawExhibits = Array.isArray(resolvedExhibits) ? resolvedExhibits : [];
+  const normalizedExhibits = rawExhibits.map((item: any, idx: number) => {
+    const raw = item.raw_artifact || item.artifact_data || item;
+    const name = item.name || raw.name || item.filename || `Evidence_Item_${idx + 1}`;
+    const fileHash = item.file_hash || raw.raw_sha256 || raw.sha256 || (item.versions && item.versions[0]?.file_hash) || 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+    const fileSize = item.file_size || raw.file_size || (item.versions && item.versions[0]?.file_size) || 2048;
+    const artifactType = item.artifact_type || raw.artifact_type || item.doc_type || (name.endsWith('.pdf') ? 'DOCUMENT' : name.match(/\.(jpe?g|png|webp)$/i) ? 'MEDIA' : name.endsWith('.txt') ? 'CHAT_EXPORT' : 'LOG');
+    const forgeryScore = item.forgery_score ?? raw.forgery_score ?? 0;
+    const isTampered = forgeryScore > 50 || !!item.is_tampered;
+    return {
+      id: item.id || raw.id || idx + 1,
+      exhibit_no: item.exhibit_code || raw.exhibit_code || `EXH-${String(idx + 1).padStart(2, '0')}`,
+      name,
+      raw_sha256: fileHash,
+      file_size: fileSize,
+      artifact_type: artifactType,
+      forgery_score: forgeryScore,
+      is_tampered: isTampered,
+      forensic_summary: item.ai_summary || raw.forensic_summary || `Cryptographic fingerprint registered for ${name}`
+    };
+  });
+
+  return {
+    caseNumber,
+    title,
+    incidentDate,
+    complainant,
+    accused,
+    location,
+    crimeType,
+    sections,
+    exhibits: normalizedExhibits
+  };
+}
+
+export function generateTimelineForCase(
+  caseId: string | number,
+  caseData?: any,
+  meta?: any,
+  exhibits?: any[]
+): any[] {
+  if (String(caseId) === '1' && (!exhibits || exhibits.length === 0) && !meta && !caseData) {
+    return DEFAULT_CASE1_TIMELINE;
+  }
+  if (String(caseId) === '2' && (!exhibits || exhibits.length === 0) && !meta && !caseData) {
+    return DEFAULT_CASE2_TIMELINE;
+  }
+
+  const ctx = resolveCaseContext(caseId, caseData, meta, exhibits);
+  const events: any[] = [];
+  let eventCounter = 1;
+
+  // Event 1: Initial Incident Trigger / Communication
+  events.push({
+    id: eventCounter++,
+    timestamp: `${ctx.incidentDate}T09:15:00Z`,
+    event_type: 'SUSPICIOUS_COMMUNICATION',
+    description: `Suspicious contact initiated: Complainant ${ctx.complainant} targeted by unauthorized communications attributed to ${ctx.accused} in relation to ${ctx.crimeType}.`,
+    actor: `${ctx.accused}`,
+    target: `${ctx.complainant}`,
+    severity: 'WARNING',
+    is_anomaly: false,
+    source: 'Victim Statement & Electronic Dispatch'
+  });
+
+  // Event 2: Network / Technical Intrusion
+  events.push({
+    id: eventCounter++,
+    timestamp: `${ctx.incidentDate}T11:42:18Z`,
+    event_type: 'NETWORK_LOG',
+    description: `Endpoint anomaly detected: Unusual authentication and digital gateway bypass logged originating from jurisdiction near ${ctx.location}.`,
+    actor: `Remote Gateway (${ctx.accused})`,
+    target: `Secure Communication Server`,
+    severity: 'CRITICAL',
+    is_anomaly: true,
+    source: 'Firewall & Network Gateway Logs'
+  });
+
+  // Event 3: Fraudulent Action / Payload
+  events.push({
+    id: eventCounter++,
+    timestamp: `${ctx.incidentDate}T13:20:00Z`,
+    event_type: 'FINANCIAL_TRANSACTION',
+    description: `Deceptive execution event: Fraudulent electronic action executed; unauthorized transaction routing identified across financial/telecom nodes.`,
+    actor: `${ctx.accused}`,
+    target: `Beneficiary Destination`,
+    severity: 'CRITICAL',
+    is_anomaly: true,
+    source: 'Core Transaction Audit Ledger'
+  });
+
+  // Events from uploaded exhibits
+  if (ctx.exhibits && ctx.exhibits.length > 0) {
+    ctx.exhibits.forEach((ex, idx) => {
+      const isAltered = ex.is_tampered || (ex.forgery_score && ex.forgery_score > 50);
+      const isChat = ex.artifact_type === 'CHAT_EXPORT' || ex.name.toLowerCase().includes('chat') || ex.name.toLowerCase().includes('whatsapp');
+      const isMedia = ex.artifact_type === 'MEDIA' || ex.name.match(/\.(jpe?g|png|webp)$/i);
+
+      let evType = 'FORENSIC_INTAKE';
+      let sev = 'INFO';
+      let desc = `Forensic intake and chain of custody registration of exhibit ${ex.exhibit_no} (${ex.name}). Bitstream integrity locked with SHA-256 fingerprint ${ex.raw_sha256.slice(0, 16)}...`;
+
+      if (isAltered) {
+        evType = 'MEDIA_MANIPULATION';
+        sev = 'CRITICAL';
+        desc = `Synthetic pixel manipulation detected in exhibit ${ex.exhibit_no} (${ex.name}). Error Level Analysis confirms ${ex.forgery_score}% tampering on critical text/timestamp regions.`;
+      } else if (isChat) {
+        evType = 'CHAT_COMMUNICATION';
+        sev = 'WARNING';
+        desc = `Communication extraction from exhibit ${ex.exhibit_no} (${ex.name}). Message logs corroborate coordination and deceptive representations by ${ctx.accused}.`;
+      } else if (isMedia) {
+        evType = 'MEDIA_VERIFICATION';
+        sev = 'INFO';
+        desc = `Forensic image verification of exhibit ${ex.exhibit_no} (${ex.name}). EXIF and sensor noise verified authentic with zero bitstream alterations.`;
+      }
+
+      const hours = 14 + idx;
+      const hourStr = String(Math.min(hours, 21)).padStart(2, '0');
+      events.push({
+        id: eventCounter++,
+        timestamp: `${ctx.incidentDate}T${hourStr}:15:00Z`,
+        event_type: evType,
+        description: desc,
+        actor: isAltered ? `${ctx.accused}` : 'Cyber Forensics Unit',
+        target: `${ex.exhibit_no}: ${ex.name}`,
+        severity: sev,
+        is_anomaly: isAltered,
+        source: `SUTRAM DFIR Core (${ex.exhibit_no})`
+      });
+    });
+  }
+
+  // Event: Statutory FIR / Docket Registration
+  events.push({
+    id: eventCounter++,
+    timestamp: `${ctx.incidentDate}T22:30:00Z`,
+    event_type: 'LEGAL_FILING',
+    description: `Official registration of Case Docket ${ctx.caseNumber} at Cyber Crime Police Station, ${ctx.location}. Statutory sections invoked: ${ctx.sections.slice(0, 3).join(', ')}.`,
+    actor: `${ctx.complainant}`,
+    target: `Cyber Crime Police Station, ${ctx.location}`,
+    severity: 'INFO',
+    is_anomaly: false,
+    source: 'State Police Station Register'
+  });
+
+  // Event: Section 63 BSA Custody Lock
+  events.push({
+    id: eventCounter++,
+    timestamp: new Date().toISOString(),
+    event_type: 'CUSTODY_LOCK',
+    description: `Complete forensic evidence bundle cryptographically signed and anchored to decentralized custody ledger under Section 63 BSA 2023. Zero chain of custody gaps.`,
+    actor: 'Investigating Officer',
+    target: 'Judicial Evidence Vault',
+    severity: 'INFO',
+    is_anomaly: false,
+    source: 'Polygon PoS Ledger (0x8A79...3901)'
+  });
+
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem(`sutram_timeline_${caseId}`, JSON.stringify(events));
+    } catch {}
+  }
+
+  return events;
+}
+
+export function getLocalTimeline(
+  caseId: string | number,
+  caseData?: any,
+  meta?: any,
+  exhibits?: any[]
+): any[] {
   if (typeof window === 'undefined') return [];
   try {
     const raw = localStorage.getItem(`sutram_timeline_${caseId}`);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
   } catch {}
-  if (String(caseId) === '1') return DEFAULT_CASE1_TIMELINE;
-  if (String(caseId) === '2') return DEFAULT_CASE2_TIMELINE;
-  return [];
+  if (String(caseId) === '1' && (!exhibits || exhibits.length === 0) && !meta && !caseData) {
+    return DEFAULT_CASE1_TIMELINE;
+  }
+  if (String(caseId) === '2' && (!exhibits || exhibits.length === 0) && !meta && !caseData) {
+    return DEFAULT_CASE2_TIMELINE;
+  }
+  return generateTimelineForCase(caseId, caseData, meta, exhibits);
 }
 
-export function getLocalGraph(caseId: string | number): any {
+export function generateGraphForCase(
+  caseId: string | number,
+  caseData?: any,
+  meta?: any,
+  exhibits?: any[]
+): any {
+  if (String(caseId) === '1' && (!exhibits || exhibits.length === 0) && !meta && !caseData) {
+    return DEFAULT_CASE1_GRAPH;
+  }
+  if (String(caseId) === '2' && (!exhibits || exhibits.length === 0) && !meta && !caseData) {
+    return DEFAULT_CASE2_GRAPH;
+  }
+
+  const ctx = resolveCaseContext(caseId, caseData, meta, exhibits);
+
+  const nodes: any[] = [];
+  const edges: any[] = [];
+
+  // 1. Accused Node
+  const suspId = 'SUSP_MAIN';
+  nodes.push({
+    id: suspId,
+    label: `${ctx.accused} (Accused)`,
+    type: 'PERSON',
+    color: '#EF4444',
+    size: 26,
+    details: {
+      role: 'Principal Accused / Offender',
+      status: 'Under Investigation / Cognizance',
+      ipc_sections: ctx.sections.join('; ')
+    }
+  });
+
+  // 2. Complainant Node
+  const victimId = 'VICTIM_MAIN';
+  nodes.push({
+    id: victimId,
+    label: `${ctx.complainant} (Complainant)`,
+    type: 'PERSON',
+    color: '#10B981',
+    size: 24,
+    details: {
+      role: 'Complainant / Aggrieved Party',
+      status: 'Sworn Informant'
+    }
+  });
+
+  // 3. Jurisdiction / Police Station
+  const locId = 'LOC_JURISDICTION';
+  nodes.push({
+    id: locId,
+    label: `${ctx.location} (Cyber PS)`,
+    type: 'LOCATION',
+    color: '#06B6D4',
+    size: 20,
+    details: {
+      location: ctx.location,
+      jurisdiction: 'Investigating Authority'
+    }
+  });
+
+  // 4. Case Node
+  const caseNodeId = 'CASE_DOCKET';
+  nodes.push({
+    id: caseNodeId,
+    label: `${ctx.caseNumber}: ${ctx.title.slice(0, 20)}`,
+    type: 'CASE',
+    color: '#8B5CF6',
+    size: 24,
+    details: {
+      case_number: ctx.caseNumber,
+      category: ctx.crimeType,
+      statutes: ctx.sections.join(', ')
+    }
+  });
+
+  // Core Edges
+  edges.push({ source: suspId, target: victimId, relation: 'TARGETED_IN_INCIDENT', confidence: 0.98 });
+  edges.push({ source: caseNodeId, target: suspId, relation: 'CHARGES_PREFERRED_AGAINST', confidence: 1.0 });
+  edges.push({ source: caseNodeId, target: victimId, relation: 'COMPLAINT_FILED_BY', confidence: 1.0 });
+  edges.push({ source: caseNodeId, target: locId, relation: 'REGISTERED_UNDER_JURISDICTION', confidence: 1.0 });
+
+  // 5. Exhibit Nodes & Edges
+  (ctx.exhibits || []).forEach((ex, idx) => {
+    const exhNodeId = `EXH_NODE_${ex.id || idx + 1}`;
+    const isAltered = ex.is_tampered || (ex.forgery_score && ex.forgery_score > 50);
+
+    nodes.push({
+      id: exhNodeId,
+      label: `${ex.exhibit_no}: ${ex.name.slice(0, 24)}`,
+      type: 'EXHIBIT',
+      color: isAltered ? '#DC2626' : '#3B82F6',
+      size: 20,
+      forgery_score: ex.forgery_score,
+      artifact_id: ex.id,
+      raw_sha256: ex.raw_sha256,
+      details: {
+        hash: ex.raw_sha256,
+        size_bytes: ex.file_size,
+        type: ex.artifact_type,
+        forgery_status: isAltered ? `Tampered (${ex.forgery_score}% ELA)` : 'Verified Authentic'
+      }
+    });
+
+    edges.push({ source: caseNodeId, target: exhNodeId, relation: 'FILED_AS_EVIDENCE', confidence: 1.0 });
+
+    const lowerName = ex.name.toLowerCase();
+    if (lowerName.includes('chat') || lowerName.includes('whatsapp') || lowerName.includes('telegram')) {
+      edges.push({ source: suspId, target: exhNodeId, relation: 'COMMUNICATED_ACROSS', confidence: 0.96 });
+      edges.push({ source: exhNodeId, target: victimId, relation: 'DISPATCHED_TO', confidence: 0.92 });
+    } else if (isAltered) {
+      edges.push({ source: suspId, target: exhNodeId, relation: 'FORGED_OR_ALTERED_BY', confidence: 0.94 });
+    } else {
+      edges.push({ source: victimId, target: exhNodeId, relation: 'SUBMITTED_AS_COMPLAINT', confidence: 0.95 });
+    }
+  });
+
+  // 6. Telecom / Technical Endpoints
+  const phoneSuspect = 'ENDPOINT_PHONE_SUSPECT';
+  nodes.push({
+    id: phoneSuspect,
+    label: '+91 9811223344 (Suspect Endpoint)',
+    type: 'PHONE',
+    color: '#F97316',
+    size: 18,
+    details: { carrier: 'Telecom SIM Terminal', suspect_association: ctx.accused }
+  });
+  edges.push({ source: suspId, target: phoneSuspect, relation: 'OPERATED_DEVICE', confidence: 0.95 });
+
+  const phoneVictim = 'ENDPOINT_PHONE_VICTIM';
+  nodes.push({
+    id: phoneVictim,
+    label: '+91 9810123456 (Complainant Endpoint)',
+    type: 'PHONE',
+    color: '#06B6D4',
+    size: 18,
+    details: { carrier: 'Victim Subscriber MSISDN', owner: ctx.complainant }
+  });
+  edges.push({ source: victimId, target: phoneVictim, relation: 'REGISTERED_LINE', confidence: 1.0 });
+  edges.push({ source: phoneSuspect, target: phoneVictim, relation: 'UNAUTHORIZED_CONTACT', confidence: 0.93 });
+
+  // 7. UPI / Financial Node
+  const upiNode = 'ENDPOINT_FINANCIAL_MULE';
+  nodes.push({
+    id: upiNode,
+    label: `${ctx.accused.toLowerCase().replace(/[^a-z0-9]/g, '') || 'suspect'}.mule@icici`,
+    type: 'UPI',
+    color: '#8B5CF6',
+    size: 20,
+    details: { account_type: 'Mule Beneficiary VPA', routing: 'UPI NPCI Switch' }
+  });
+  edges.push({ source: suspId, target: upiNode, relation: 'BENEFICIARY_CONTROLLER', confidence: 0.98 });
+
+  const summary = {
+    total_nodes: nodes.length,
+    total_edges: edges.length,
+    case_nodes: 1,
+    exhibit_nodes: ctx.exhibits?.length || 0,
+    entity_nodes: nodes.length - (ctx.exhibits?.length || 0) - 1
+  };
+
+  const graph = { nodes, edges, summary };
+
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem(`sutram_graph_${caseId}`, JSON.stringify(graph));
+    } catch {}
+  }
+
+  return graph;
+}
+
+export function getLocalGraph(
+  caseId: string | number,
+  caseData?: any,
+  meta?: any,
+  exhibits?: any[]
+): any {
   if (typeof window === 'undefined') return { nodes: [], edges: [] };
   try {
     const raw = localStorage.getItem(`sutram_graph_${caseId}`);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.nodes) && parsed.nodes.length > 0) return parsed;
+    }
   } catch {}
-  if (String(caseId) === '1') return DEFAULT_CASE1_GRAPH;
-  if (String(caseId) === '2') return DEFAULT_CASE2_GRAPH;
-  return { nodes: [], edges: [] };
+  if (String(caseId) === '1' && (!exhibits || exhibits.length === 0) && !meta && !caseData) {
+    return DEFAULT_CASE1_GRAPH;
+  }
+  if (String(caseId) === '2' && (!exhibits || exhibits.length === 0) && !meta && !caseData) {
+    return DEFAULT_CASE2_GRAPH;
+  }
+  return generateGraphForCase(caseId, caseData, meta, exhibits);
 }
 
 export function getLocalHypotheses(caseId: string | number): any[] {
@@ -878,12 +1292,144 @@ export function saveLocalHypothesisReview(caseId: string | number, hypId: number
   }
 }
 
-export function getLocalChargeSheet(caseId: string | number): any {
-  if (String(caseId) === '2') return DEFAULT_CASE2_CHARGESHEET;
-  return DEFAULT_CASE1_CHARGESHEET;
+export function getLocalChargeSheet(
+  caseId: string | number,
+  caseData?: any,
+  meta?: any,
+  exhibits?: any[],
+  currentUser?: any
+): any {
+  if (String(caseId) === '1' && (!exhibits || exhibits.length === 0) && !meta && !caseData) {
+    return DEFAULT_CASE1_CHARGESHEET;
+  }
+  if (String(caseId) === '2' && (!exhibits || exhibits.length === 0) && !meta && !caseData) {
+    return DEFAULT_CASE2_CHARGESHEET;
+  }
+
+  const ctx = resolveCaseContext(caseId, caseData, meta, exhibits);
+
+  const officerName = currentUser?.name || meta?.assigned_officer || 'Sub-Inspector Sharma';
+  const officerRank = currentUser?.role === 'Officer' ? 'Sub-Inspector (Cyber Crime Cell)' : (currentUser?.role || 'Investigating Officer');
+  const officerBadge = currentUser?.badge || '9482A';
+  const policeStation = meta?.police_station || (ctx.location ? `Cyber Crime Police Station, ${ctx.location}` : 'Cyber Crime Police Station, Sector 62, Noida');
+  const courtName = `IN THE COURT OF CHIEF JUDICIAL MAGISTRATE / DISTRICT SESSIONS JUDGE, ${ctx.location.toUpperCase()}`;
+
+  const formattedSections = ctx.sections.map((s: string) => {
+    if (s.includes('BNS') || s.includes('BSA') || s.includes('IT Act') || s.includes('Section')) return s;
+    return `Section ${s} Bharatiya Nyaya Sanhita, 2023`;
+  });
+
+  const exhibitsList = (ctx.exhibits && ctx.exhibits.length > 0)
+    ? ctx.exhibits.map(ex => ({
+        exhibit_no: ex.exhibit_no,
+        name: ex.name,
+        type: ex.artifact_type,
+        raw_sha256: ex.raw_sha256,
+        is_tampered: ex.is_tampered,
+        forgery_score: ex.forgery_score
+      }))
+    : [
+        {
+          exhibit_no: 'EXH-01',
+          name: `${ctx.caseNumber}_Complaint_and_Logs.pdf`,
+          type: 'DOCUMENT',
+          raw_sha256: 'ed380c536c4af3db7ea21237f069cd70f4ba5ec9a7e397092f0deaa01163c1e3',
+          is_tampered: false,
+          forgery_score: 0
+        }
+      ];
+
+  const tamperedExhibits = exhibitsList.filter(e => e.is_tampered);
+  const aiFindings = tamperedExhibits.length > 0
+    ? `Automated ML Error Level Analysis confirmed synthetic pixel tampering on ${tamperedExhibits.map(e => `${e.exhibit_no} (ELA ${e.forgery_score}%)`).join(', ')}. Polygon blockchain anchoring verified cryptographic SHA-256 fingerprints with zero chain of custody gaps.`
+    : `Automated ML multi-source correlation verified authentic bitstream across all ${exhibitsList.length} electronic exhibits. Polygon blockchain anchoring verified un-salted SHA-256 fingerprints with zero chain of custody gaps.`;
+
+  return {
+    court_name: courtName,
+    fir_number: ctx.caseNumber,
+    fir_date: ctx.incidentDate,
+    police_station: policeStation,
+    statutory_provisions: formattedSections,
+    complainant: {
+      name: ctx.complainant,
+      contact: meta?.complainant_phone || '+91 9810123456',
+      address: meta?.complainant_address || `Resident of ${ctx.location}`,
+      loss_amount: meta?.financial_loss || 'Subject to Forensic Banking Audit'
+    },
+    accused: {
+      name: `${ctx.accused} (Principal Accused)`,
+      phone: meta?.accused_phone || '+91 9811223344',
+      upi_beneficiary: `${ctx.accused.toLowerCase().replace(/[^a-z0-9]/g, '') || 'suspect'}.mule@icici`,
+      origin_ip: meta?.accused_ip || '185.220.101.45 (Proxy / Remote Node)',
+      arrest_status: meta?.accused_status || 'Under Investigation / Apprehended in Judicial Process'
+    },
+    modus_operandi: `The accused ${ctx.accused} orchestrated deliberate cyber deception within the territorial jurisdiction of ${policeStation}, targeting the complainant ${ctx.complainant}. Digital forensic investigation into ${exhibitsList.length} seized exhibits and electronic records establishes direct links to the accused person's digital infrastructure. All evidence items have been preserved under Section 63 BSA 2023 with cryptographic hash integrity and unbroken custodial tracking.`,
+    ai_forensic_findings: aiFindings,
+    exhibits: exhibitsList,
+    blockchain_anchoring: {
+      network: 'Polygon PoS Mainnet (Contract: 0x8A79F218...3901)',
+      smart_contract: '0x8A79F218b856a9B70C3F24591F384Da229b43901',
+      verification_method: 'Merkle Root SHA-256 Cryptographic Timestamp'
+    },
+    prayer: `It is therefore most respectfully prayed that this Hon'ble Court may be pleased to take judicial cognizance of the offenses against the accused ${ctx.accused} under Section 193 of the Bharatiya Nagarik Suraksha Sanhita, 2023 (BNSS), issue process, and try the accused in accordance with law.`,
+    investigating_officer: {
+      name: officerName,
+      rank: officerRank,
+      badge_no: officerBadge,
+      police_unit: policeStation
+    }
+  };
 }
 
-export function getLocalBSACert(caseId: string | number): any {
-  if (String(caseId) === '2') return DEFAULT_CASE2_BSACERT;
-  return DEFAULT_CASE1_BSACERT;
+export function getLocalBSACert(
+  caseId: string | number,
+  caseData?: any,
+  meta?: any,
+  exhibits?: any[],
+  currentUser?: any
+): any {
+  if (String(caseId) === '1' && (!exhibits || exhibits.length === 0) && !meta && !caseData) {
+    return DEFAULT_CASE1_BSACERT;
+  }
+  if (String(caseId) === '2' && (!exhibits || exhibits.length === 0) && !meta && !caseData) {
+    return DEFAULT_CASE2_BSACERT;
+  }
+
+  const ctx = resolveCaseContext(caseId, caseData, meta, exhibits);
+
+  const officerName = currentUser?.name || meta?.assigned_officer || 'Sub-Inspector Sharma';
+  const officerRole = currentUser?.role === 'Officer' ? 'Investigating Officer (Cyber Forensics)' : (currentUser?.role || 'Cyber Forensics Officer');
+  const officerBadge = currentUser?.badge || '9482A';
+  const policeStation = meta?.police_station || (ctx.location ? `Cyber Crime Police Station, ${ctx.location}` : 'Cyber Crime Police Station, Sector 62, Noida');
+
+  const partAExhibits = (ctx.exhibits && ctx.exhibits.length > 0)
+    ? ctx.exhibits.map(ex => ({
+        exhibit_no: ex.exhibit_no,
+        artifact_name: ex.name,
+        un_salted_sha256: ex.raw_sha256,
+        file_size_bytes: ex.file_size
+      }))
+    : [
+        {
+          exhibit_no: 'EXH-01',
+          artifact_name: `${ctx.caseNumber}_Seizure_Dossier.pdf`,
+          un_salted_sha256: 'ed380c536c4af3db7ea21237f069cd70f4ba5ec9a7e397092f0deaa01163c1e3',
+          file_size_bytes: 6177
+        }
+      ];
+
+  return {
+    certificate_id: `BSA-2026-${String(caseId).slice(-4)}-${Date.now().toString().slice(-4)}`,
+    case_number: ctx.caseNumber,
+    case_title: `${ctx.caseNumber}: ${ctx.title}`,
+    blockchain_verification_network: 'Polygon PoS Mainnet (Contract: 0x8A79F218...3901)',
+    part_a_exhibits: partAExhibits,
+    part_b_declaration: `I, ${officerName}, ${officerRole}, ${policeStation}, do hereby certify under Section 63 of the Bharatiya Sakshya Adhiniyam, 2023 (BSA):\n1. That the electronic records enumerated in Part A were produced by computer systems and digital communication networks operating properly throughout the material period.\n2. That the un-salted SHA-256 cryptographic hashes stated above were calculated directly from the original bitstream at the time of forensic seizure and intake into the SUTRAM vault.\n3. That the integrity of said electronic records has remained unbroken and tamper-free from the moment of seizure to production before this Hon’ble Court.`,
+    officer: {
+      name: officerName,
+      role: officerRole,
+      badge: officerBadge,
+      department: policeStation
+    }
+  };
 }

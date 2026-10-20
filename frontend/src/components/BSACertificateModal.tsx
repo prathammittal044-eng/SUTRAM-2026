@@ -5,10 +5,21 @@ import { getLocalBSACert } from '@/lib/clientForensics';
 
 interface BSACertificateModalProps {
   caseId: number | string;
+  caseData?: any;
+  meta?: any;
+  exhibits?: any[];
+  currentUser?: any;
   onClose: () => void;
 }
 
-export default function BSACertificateModal({ caseId, onClose }: BSACertificateModalProps) {
+export default function BSACertificateModal({
+  caseId,
+  caseData,
+  meta,
+  exhibits,
+  currentUser,
+  onClose
+}: BSACertificateModalProps) {
   const [certData, setCertData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
@@ -33,13 +44,13 @@ export default function BSACertificateModal({ caseId, onClose }: BSACertificateM
         console.warn('BSA API unavailable, using verified local certificate:', err);
       }
       if (active) {
-        setCertData(getLocalBSACert(caseId));
+        setCertData(getLocalBSACert(caseId, caseData, meta, exhibits, currentUser));
         setLoading(false);
       }
     };
     loadCert();
     return () => { active = false; };
-  }, [caseId]);
+  }, [caseId, caseData, meta, exhibits, currentUser]);
 
   const handlePrint = () => {
     if (process.env.NEXT_PUBLIC_API_URL) {

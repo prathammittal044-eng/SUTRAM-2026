@@ -26,6 +26,8 @@ import {
   getLocalGraph,
   getLocalHypotheses,
   saveLocalHypothesisReview,
+  generateTimelineForCase,
+  generateGraphForCase,
   DEFAULT_CASE1_ARTIFACTS,
   DEFAULT_CASE1_TIMELINE,
   DEFAULT_CASE1_GRAPH,
@@ -162,7 +164,12 @@ export default function CaseDetails() {
         }
       }
     } catch (err) { console.warn('Timeline API unavailable, using local timeline:', err); }
-    setTimelineEvents(getLocalTimeline(String(id)));
+    let tl = getLocalTimeline(String(id));
+    if (!tl || tl.length === 0) {
+      const storedMeta = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('case_metadata') || '{}')[String(id)] : null;
+      tl = generateTimelineForCase(String(id), caseData, storedMeta, artifacts);
+    }
+    setTimelineEvents(tl);
   };
 
   const fetchGraph = async () => {
@@ -178,7 +185,40 @@ export default function CaseDetails() {
         }
       }
     } catch (err) { console.warn('Graph API unavailable, using local graph:', err); }
-    setGraphData(getLocalGraph(String(id)));
+    let gr = getLocalGraph(String(id));
+    if (!gr || !gr.nodes || gr.nodes.length === 0) {
+      const storedMeta = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('case_metadata') || '{}')[String(id)] : null;
+      gr = generateGraphForCase(String(id), caseData, storedMeta, artifacts);
+    }
+    setGraphData(gr);
+  };
+
+  const handleSynthesizeTimeline = () => {
+    try {
+      const storedMeta = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('case_metadata') || '{}')[String(id)] : null;
+      const customList = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('sutram_custom_cases') || '[]') : [];
+      const found = customList.find((c: any) => String(c.id) === String(id));
+      const activeCase = caseData || found;
+      const generated = generateTimelineForCase(String(id), activeCase, storedMeta, unifiedDocs);
+      setTimelineEvents(generated);
+      alert('⚡ Forensic timeline successfully synthesized from exhibits and incident metadata!');
+    } catch (e) {
+      console.error('Error synthesizing timeline:', e);
+    }
+  };
+
+  const handleSynthesizeGraph = () => {
+    try {
+      const storedMeta = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('case_metadata') || '{}')[String(id)] : null;
+      const customList = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('sutram_custom_cases') || '[]') : [];
+      const found = customList.find((c: any) => String(c.id) === String(id));
+      const activeCase = caseData || found;
+      const generated = generateGraphForCase(String(id), activeCase, storedMeta, unifiedDocs);
+      setGraphData(generated);
+      alert('⚡ DFIR Knowledge graph successfully synthesized from evidence entities!');
+    } catch (e) {
+      console.error('Error synthesizing graph:', e);
+    }
   };
 
   const fetchHypotheses = async () => {
@@ -360,6 +400,8 @@ export default function CaseDetails() {
           alert('Document securely uploaded and sealed under Section 63 BSA!');
           fetchCase();
           fetchArtifacts();
+          fetchTimeline();
+          fetchGraph();
           form.reset();
           setIsUploading(false);
           return;
@@ -447,6 +489,8 @@ export default function CaseDetails() {
         alert(`Document '${docName}' cryptographically hashed (SHA-256) and sealed under Section 63 BSA!`);
         fetchCase();
         fetchArtifacts();
+        fetchTimeline();
+        fetchGraph();
         form.reset();
       } catch {
         alert('Error processing file locally.');
@@ -1468,19 +1512,58 @@ export default function CaseDetails() {
 
         {/* TAB 2: MASTER INCIDENT TIMELINE */}
         {activeTab === 'TIMELINE' && (
-          <MasterTimeline events={timelineEvents} />
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-zinc-900/60 border border-zinc-800 rounded-xl p-4 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-[#FF4E18]/10 text-[#FF4E18] border border-[#FF4E18]/20 flex items-center justify-center">
+                  <Clock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-white text-sm">Forensic Incident Chronology</h3>
+                  <p className="text-xs text-zinc-400">Chronological multi-source event sequence synthesized from CDR logs, chat exports, financial transfers, and seized exhibits.</p>
+                </div>
+              </div>
+              <button
+                onClick={handleSynthesizeTimeline}
+                className="bg-[#FF4E18] hover:bg-[#e04515] text-white text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-2 cursor-pointer shadow-sm transition-all"
+              >
+                <Sparkles className="w-3.5 h-3.5" /> Re-Synthesize Timeline
+              </button>
+            </div>
+            <MasterTimeline events={timelineEvents} onSynthesize={handleSynthesizeTimeline} />
+          </div>
         )}
 
         {/* TAB 3: EVIDENCE KNOWLEDGE GRAPH */}
         {activeTab === 'GRAPH' && (
-          <EvidenceGraph
-            data={graphData}
-            caseTitle={`${caseData?.case_number}: ${caseData?.title}`}
-            onOpenExhibitInspector={(art) => {
-              const found = artifacts.find(a => a.id === art.artifact_id || a.id === art.id) || art;
-              setSelectedArtifactForInspector(found);
-            }}
-          />
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-zinc-900/60 border border-zinc-800 rounded-xl p-4 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20 flex items-center justify-center">
+                  <Network className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-white text-sm">DFIR Entity Knowledge Graph (Detective Board)</h3>
+                  <p className="text-xs text-zinc-400">Multi-source crime matrix mapping suspect personas, victim subscribers, UPI mule accounts, and exhibits.</p>
+                </div>
+              </div>
+              <button
+                onClick={handleSynthesizeGraph}
+                className="bg-[#FF4E18] hover:bg-[#e04515] text-white text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-2 cursor-pointer shadow-sm transition-all"
+              >
+                <Sparkles className="w-3.5 h-3.5" /> Re-Synthesize Graph
+              </button>
+            </div>
+            <EvidenceGraph
+              data={graphData}
+              caseTitle={`${caseData?.case_number}: ${caseData?.title}`}
+              onSynthesizeGraph={handleSynthesizeGraph}
+              onOpenExhibitInspector={(art) => {
+                const found = artifacts.find(a => a.id === art.artifact_id || a.id === art.id) || art;
+                setSelectedArtifactForInspector(found);
+              }}
+            />
+          </div>
         )}
 
         {/* TAB 4: AI HYPOTHESES & TRIAGE */}
@@ -1678,7 +1761,11 @@ export default function CaseDetails() {
 
       {showBsaModal && (
         <BSACertificateModal
-          caseId={parseInt(id as string)}
+          caseId={id as string}
+          caseData={caseData}
+          meta={typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('case_metadata') || '{}')[String(id)] : null}
+          exhibits={unifiedDocs}
+          currentUser={currentUser}
           onClose={() => setShowBsaModal(false)}
         />
       )}
@@ -1686,6 +1773,10 @@ export default function CaseDetails() {
       {showChargeSheetModal && (
         <ChargeSheetModal
           caseId={id as string}
+          caseData={caseData}
+          meta={typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('case_metadata') || '{}')[String(id)] : null}
+          exhibits={unifiedDocs}
+          currentUser={currentUser}
           onClose={() => setShowChargeSheetModal(false)}
         />
       )}
