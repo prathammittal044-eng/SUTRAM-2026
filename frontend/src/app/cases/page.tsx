@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { 
   Search, 
   Folder, 
@@ -13,7 +14,9 @@ import {
   Lock, 
   ArrowRight, 
   Cpu,
-  Trash2
+  Trash2,
+  RefreshCw,
+  AlertTriangle
 } from 'lucide-react';
 import Navbar from '@/components/Navbar';
 
@@ -88,11 +91,14 @@ const INITIAL_FALLBACK_CASES = [
 ];
 
 export default function CasesDashboard() {
+  const router = useRouter();
   const [cases, setCases] = useState<any[]>(INITIAL_FALLBACK_CASES);
   const [searchQuery, setSearchQuery] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [selectedSections, setSelectedSections] = useState<string[]>([]);
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [isCreating, setIsCreating] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   const canCreateCase = currentUser?.role === 'Officer';
 
@@ -207,75 +213,109 @@ export default function CasesDashboard() {
     setSelectedSections(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]);
   };
 
-  const handleCreateCase = async (e: any) => {
+  const handleCreateCase = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const fd = new FormData(e.target);
+    if (isCreating) return;
+    setIsCreating(true);
+    setFormError(null);
 
-    const caseNumber = (fd.get('case_number') as string)?.trim() || `FIR-2026-${Math.floor(100 + Math.random() * 900)}`;
-    const title = (fd.get('title') as string)?.trim() || 'Untitled Investigation';
-
-    const meta = {
-      title,
-      crime_type: (fd.get('crime_type') as string) || 'Cyber Crime / Fraud',
-      incident_date: (fd.get('incident_date') as string) || new Date().toISOString().split('T')[0],
-      location: (fd.get('location') as string) || 'State Cyber Crime Cell',
-      complainant_name: (fd.get('complainant_name') as string) || 'State Complainant',
-      complainant_phone: (fd.get('complainant_phone') as string) || '',
-      accused_name: (fd.get('accused_name') as string) || 'Unidentified Suspect',
-      ipc_sections: selectedSections.length > 0 ? selectedSections : ['IT Act 66D – Cheating by Personation'],
-      description: (fd.get('description') as string) || '',
-    };
-
-    const newCase = {
-      id: Date.now(),
-      case_number: caseNumber,
-      title: title,
-      status: 'Open',
-      is_sealed: false,
-      created_at: new Date().toISOString(),
-    };
-
-    // Attempt backend sync in background
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL;
-      if (apiUrl || (typeof window !== 'undefined' && window.location.hostname === 'localhost')) {
-        const token = typeof window !== 'undefined' ? localStorage.getItem('sih_token') : null;
-        const res = await fetch(`${apiUrl || 'http://localhost:8000'}/cases/`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {})
-          },
-          body: JSON.stringify({ case_number: caseNumber, title }),
-        });
-        if (res.ok) {
-          const backendCase = await res.json();
-          if (backendCase && backendCase.id) {
-            newCase.id = backendCase.id;
+      const form = e.currentTarget;
+      const fd = new FormData(form);
+
+      const rawCaseNumber = fd.get('case_number') as string;
+      const rawTitle = fd.get('title') as string;
+      const rawCrimeType = fd.get('crime_type') as string;
+      const rawDate = fd.get('incident_date') as string;
+      const rawLocation = fd.get('location') as string;
+      const rawComplainant = fd.get('complainant_name') as string;
+      const rawAccused = fd.get('accused_name') as string;
+      const rawDescription = fd.get('description') as string;
+
+      if (!rawCaseNumber?.trim() || !rawTitle?.trim()) {
+        setFormError('Please enter both Case Identifier and Case Title.');
+        setIsCreating(false);
+        return;
+      }
+
+      const caseNumber = rawCaseNumber.trim();
+      const title = rawTitle.trim();
+
+      const meta = {
+        title,
+        crime_type: rawCrimeType?.trim() || 'Cyber Crime / Fraud',
+        incident_date: rawDate?.trim() || new Date().toISOString().split('T')[0],
+        location: rawLocation?.trim() || 'State Cyber Crime Cell',
+        complainant_name: rawComplainant?.trim() || 'State Complainant',
+        complainant_phone: '',
+        accused_name: rawAccused?.trim() || 'Unidentified Suspect',
+        ipc_sections: selectedSections.length > 0 ? selectedSections : ['IT Act 66D – Cheating by Personation'],
+        description: rawDescription?.trim() || '',
+      };
+
+      const newCase = {
+        id: Date.now(),
+        case_number: caseNumber,
+        title: title,
+        status: 'Open',
+        is_sealed: false,
+        created_at: new Date().toISOString(),
+      };
+
+      // Background backend sync attempt with 1.5s timeout
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+        if (apiUrl || (typeof window !== 'undefined' && window.location.hostname === 'localhost')) {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 1500);
+          const token = typeof window !== 'undefined' ? localStorage.getItem('sih_token') : null;
+          const res = await fetch(`${apiUrl || 'http://localhost:8000'}/cases/`, {
+            method: 'POST',
+            signal: controller.signal,
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {})
+            },
+            body: JSON.stringify({ case_number: caseNumber, title }),
+          });
+          clearTimeout(timeoutId);
+          if (res.ok) {
+            const backendCase = await res.json();
+            if (backendCase && backendCase.id) {
+              newCase.id = backendCase.id;
+            }
           }
         }
+      } catch (syncErr) {
+        console.warn('Backend sync bypassed/timed out, saving to secure client storage:', syncErr);
       }
-    } catch (err) {
-      console.warn('Backend sync failed, case saved to secure client storage:', err);
+
+      // Persist case metadata locally
+      try {
+        const stored = JSON.parse(localStorage.getItem('case_metadata') || '{}');
+        stored[newCase.id] = meta;
+        localStorage.setItem('case_metadata', JSON.stringify(stored));
+      } catch {}
+
+      // Persist case in custom cases list
+      try {
+        const customList = JSON.parse(localStorage.getItem('sutram_custom_cases') || '[]');
+        const filtered = customList.filter((x: any) => String(x.id) !== String(newCase.id) && x.case_number !== newCase.case_number);
+        localStorage.setItem('sutram_custom_cases', JSON.stringify([newCase, ...filtered]));
+      } catch {}
+
+      setCases(prev => [newCase, ...prev.filter(x => String(x.id) !== String(newCase.id) && x.case_number !== newCase.case_number)]);
+      setShowModal(false);
+      setSelectedSections([]);
+      setIsCreating(false);
+
+      // Instantly open the newly created case
+      router.push(`/case/${newCase.id}`);
+    } catch (err: any) {
+      console.error('Error creating case:', err);
+      setIsCreating(false);
+      setShowModal(false);
     }
-
-    // Persist case metadata locally
-    try {
-      const stored = JSON.parse(localStorage.getItem('case_metadata') || '{}');
-      stored[newCase.id] = meta;
-      localStorage.setItem('case_metadata', JSON.stringify(stored));
-    } catch {}
-
-    // Persist case in custom cases list
-    try {
-      const customList = JSON.parse(localStorage.getItem('sutram_custom_cases') || '[]');
-      const filtered = customList.filter((x: any) => x.id !== newCase.id && x.case_number !== newCase.case_number);
-      localStorage.setItem('sutram_custom_cases', JSON.stringify([newCase, ...filtered]));
-    } catch {}
-
-    setCases(prev => [newCase, ...prev.filter(x => x.id !== newCase.id && x.case_number !== newCase.case_number)]);
-    setShowModal(false);
-    setSelectedSections([]);
   };
 
   const getCaseMeta = (id: number) => {
@@ -499,7 +539,13 @@ export default function CasesDashboard() {
               </button>
             </div>
 
-            <form onSubmit={handleCreateCase} className="p-6 space-y-4 max-h-[75vh] overflow-y-auto text-xs">
+            <form onSubmit={handleCreateCase} noValidate className="p-6 space-y-4 max-h-[75vh] overflow-y-auto text-xs">
+              {formError && (
+                <div className="p-3 bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg text-xs flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                  <span>{formError}</span>
+                </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-white/70 mb-1 font-mono text-[11px] uppercase tracking-wider">Case / FIR Identifier *</label>
@@ -616,9 +662,22 @@ export default function CasesDashboard() {
                 </button>
                 <button 
                   type="submit"
-                  className="flex-1 bg-white hover:bg-stone-200 text-black font-semibold text-xs py-2.5 rounded-full transition-all flex items-center justify-center gap-1.5"
+                  disabled={isCreating}
+                  className={`flex-1 font-semibold text-xs py-2.5 rounded-full transition-all flex items-center justify-center gap-1.5 ${
+                    isCreating 
+                      ? 'bg-stone-300 text-stone-700 cursor-wait' 
+                      : 'bg-white hover:bg-stone-200 text-black cursor-pointer'
+                  }`}
                 >
-                  <ShieldCheck className="w-4 h-4 text-black" /> Register Docket
+                  {isCreating ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin text-black" /> Registering Docket...
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck className="w-4 h-4 text-black" /> Register Docket
+                    </>
+                  )}
                 </button>
               </div>
             </form>

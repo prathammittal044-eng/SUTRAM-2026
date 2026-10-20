@@ -56,6 +56,8 @@ const getFallbackOrLocalCase = (caseId: string) => {
       if (!base) {
         const customList = JSON.parse(localStorage.getItem('sutram_custom_cases') || '[]');
         const found = customList.find((c: any) => String(c.id) === String(caseId));
+        const storedMeta = JSON.parse(localStorage.getItem('case_metadata') || '{}');
+        const meta = storedMeta[caseId];
         if (found) {
           base = {
             id: found.id,
@@ -63,23 +65,21 @@ const getFallbackOrLocalCase = (caseId: string) => {
             title: found.title,
             status: found.status || 'Open',
             is_sealed: !!found.is_sealed,
-            created_at: found.created_at,
+            created_at: found.created_at || meta?.incident_date || new Date().toISOString(),
+            crime_category: meta?.crime_type || 'Cyber Crime / Fraud',
             documents: []
           };
-        } else {
-          const storedMeta = JSON.parse(localStorage.getItem('case_metadata') || '{}');
-          const meta = storedMeta[caseId];
-          if (meta) {
-            base = {
-              id: caseId,
-              case_number: `CASE-${String(caseId).slice(-4)}`,
-              title: meta.title || 'Active Investigation Docket',
-              status: 'Open',
-              is_sealed: false,
-              created_at: meta.incident_date || new Date().toISOString(),
-              documents: []
-            };
-          }
+        } else if (meta) {
+          base = {
+            id: caseId,
+            case_number: `CASE-${String(caseId).slice(-4)}`,
+            title: meta.title || 'Active Investigation Docket',
+            status: 'Open',
+            is_sealed: false,
+            created_at: meta.incident_date || new Date().toISOString(),
+            crime_category: meta.crime_type || 'Cyber Crime / Fraud',
+            documents: []
+          };
         }
       }
       if (base) {
