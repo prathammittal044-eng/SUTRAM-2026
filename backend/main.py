@@ -376,6 +376,32 @@ def get_case(case_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Case not found")
     return case
 
+@app.delete("/cases/{case_id}/")
+def delete_case(case_id: int, user_id: int = 1, db: Session = Depends(get_db)):
+    case = db.query(models.Case).filter(models.Case.id == case_id).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    
+    # Cascade cleanup
+    db.query(models.ForensicEvent).filter(models.ForensicEvent.case_id == case_id).delete()
+    db.query(models.ForensicEntity).filter(models.ForensicEntity.case_id == case_id).delete()
+    db.query(models.EntityLink).filter(models.EntityLink.case_id == case_id).delete()
+    db.query(models.InvestigationHypothesis).filter(models.InvestigationHypothesis.case_id == case_id).delete()
+    db.query(models.EvidenceArtifact).filter(models.EvidenceArtifact.case_id == case_id).delete()
+    
+    docs = db.query(models.Document).filter(models.Document.case_id == case_id).all()
+    for d in docs:
+        versions = db.query(models.DocumentVersion).filter(models.DocumentVersion.document_id == d.id).all()
+        for v in versions:
+            db.query(models.DocumentImage).filter(models.DocumentImage.document_version_id == v.id).delete()
+            db.delete(v)
+        db.delete(d)
+        
+    c_num = case.case_number
+    db.delete(case)
+    db.commit()
+    return {"status": "success", "message": f"Case {c_num} (ID #{case_id}) deleted successfully"}
+
 # -------------------------------------------------------
 # Feature 2: Case Sealing (Judge only)
 # -------------------------------------------------------

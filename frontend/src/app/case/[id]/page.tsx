@@ -27,12 +27,8 @@ const USERS: Record<number, { name: string; role: string; badge: string }> = {
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 const FALLBACK_CASES_DATA: Record<string, any> = {
-  '1': { id: 1, case_number: 'FIR-2026-111', title: 'State v. K. Malhotra — Insider Data Exfiltration & Trade Secret Theft', status: 'Sealed', is_sealed: true, documents: [] },
-  '2': { id: 2, case_number: 'FIR-2026-105', title: 'Operation PhantomLocker — Double-Extortion Ransomware on Cloud Infrastructure', status: 'Sealed', is_sealed: true, documents: [] },
-  '3': { id: 3, case_number: 'FIR-2026-331', title: 'Operation DarkNexus — Multi-Vector SIM Swap & Financial Extortion Ring', status: 'Open', is_sealed: false, documents: [] },
-  '4': { id: 4, case_number: 'INC-2026-300', title: 'FinTech Payment Gateway Token Compromise & Money Mule Network', status: 'Sealed', is_sealed: true, documents: [] },
-  '5': { id: 5, case_number: 'FIR-2026-113', title: 'Deepfake CEO Impersonation & Unauthorized Wire-Transfer Fraud', status: 'Open', is_sealed: false, documents: [] },
-  '6': { id: 6, case_number: 'INC-2026/CYB/901', title: 'Critical Infrastructure SCADA Network Intrusion & Sabotage', status: 'Open', is_sealed: false, documents: [] },
+  '1': { id: 1, case_number: 'FIR-2026-402', title: 'Operation Cybershield — SIM Swap, Fake KYC & Multi-State Banking Mule Fraud', status: 'Open', is_sealed: false, documents: [] },
+  '2': { id: 2, case_number: 'INC-2026-518', title: 'Operation BlackByte — Corporate Cloud Ransomware & AWS S3 Exfiltration', status: 'Sealed', is_sealed: true, documents: [] },
 };
 
 export default function CaseDetails() {

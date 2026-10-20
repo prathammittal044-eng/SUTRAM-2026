@@ -12,7 +12,8 @@ import {
   Tag, 
   Lock, 
   ArrowRight, 
-  Cpu 
+  Cpu,
+  Trash2
 } from 'lucide-react';
 import Navbar from '@/components/Navbar';
 
@@ -39,68 +40,51 @@ const DEFAULT_CASE_METADATA: Record<number, {
   ipc_sections: string[];
 }> = {
   1: {
-    crime_type: 'Corporate Espionage & Extortion',
-    incident_date: '2026-07-14',
-    location: 'Gurugram, Haryana',
-    complainant_name: 'Nexus Technologies Pvt Ltd',
-    accused_name: 'Kunal Malhotra (Former CTO)',
-    ipc_sections: ['Section 308(2) BNS – Extortion', 'IT Act 66C – Identity Theft'],
-  },
-  2: {
     crime_type: 'Cyber Crime / Fraud',
-    incident_date: '2026-06-22',
-    location: 'Mumbai, Maharashtra',
-    complainant_name: 'CloudMatrix Solutions',
-    accused_name: 'Unknown Threat Actor (APT-Phantom)',
-    ipc_sections: ['IT Act 66D – Cheating by Personation', 'Section 336(3) BNS – Forgery'],
-  },
-  3: {
-    crime_type: 'Cyber Crime / Fraud',
-    incident_date: '2026-08-29',
-    location: 'New Delhi, India',
-    complainant_name: 'State Cyber Crime Cell',
-    accused_name: 'Rajiv Saxena & Associates',
+    incident_date: '2026-03-14',
+    location: 'Sector 62, Noida, Uttar Pradesh',
+    complainant_name: 'Dr. Ananya Sen (+91 9810123456)',
+    accused_name: 'Vicky Rawat (+91 9811223344) & Bunty Hawala',
     ipc_sections: [
       'Section 308(2) BNS – Extortion',
       'Section 318(4) BNS – Cheating',
       'IT Act 66C – Identity Theft',
       'IT Act 66D – Cheating by Personation',
-      'Section 63 BSA 2023 – Electronic Records',
+      'Section 63 BSA 2023 – Electronic Records'
     ],
   },
-  4: {
-    crime_type: 'Cyber Crime / Fraud',
-    incident_date: '2026-08-30',
-    location: 'Bengaluru, Karnataka',
-    complainant_name: 'PaySecure Financial Ltd',
-    accused_name: 'Unidentified Syndicate (Operation Chimera)',
-    ipc_sections: ['Section 318(4) BNS – Cheating', '420 – Cheating', '120B – Criminal Conspiracy'],
-  },
-  5: {
-    crime_type: 'Forgery / Cheating',
-    incident_date: '2026-09-15',
-    location: 'Hyderabad, Telangana',
-    complainant_name: 'Orion Pharmaceuticals',
-    accused_name: 'Unknown Deepfake Operator',
-    ipc_sections: ['Section 336(3) BNS – Forgery', 'IT Act 66D – Cheating by Personation'],
-  },
-  6: {
-    crime_type: 'Cyber Crime / Fraud',
-    incident_date: '2026-10-01',
-    location: 'Visakhapatnam, Andhra Pradesh',
-    complainant_name: 'NTPC Vizag Power Plant',
-    accused_name: 'Unknown State-Sponsored Actor',
-    ipc_sections: ['IT Act 66C – Identity Theft', 'Section 63 BSA 2023 – Electronic Records'],
-  },
+  2: {
+    crime_type: 'Corporate Espionage & Extortion',
+    incident_date: '2026-03-15',
+    location: 'Electronic City, Bengaluru, Karnataka',
+    complainant_name: 'Arjun Menon (CISO, PayVance Technologies)',
+    accused_name: 'CipherPhantom (BlackByte Ransomware Group)',
+    ipc_sections: [
+      'Section 308(2) BNS – Extortion',
+      'IT Act 66C – Identity Theft',
+      'IT Act 66D – Cheating by Personation',
+      'Section 63 BSA 2023 – Electronic Records'
+    ],
+  }
 };
 
 const INITIAL_FALLBACK_CASES = [
-  { id: 1, case_number: "FIR-2026-111", title: "State v. K. Malhotra — Insider Data Exfiltration & Trade Secret Theft", status: "Sealed", is_sealed: true },
-  { id: 2, case_number: "FIR-2026-105", title: "Operation PhantomLocker — Double-Extortion Ransomware on Cloud Infrastructure", status: "Sealed", is_sealed: true },
-  { id: 3, case_number: "FIR-2026-331", title: "Operation DarkNexus — Multi-Vector SIM Swap & Financial Extortion Ring", status: "Open", is_sealed: false },
-  { id: 4, case_number: "INC-2026-300", title: "FinTech Payment Gateway Token Compromise & Money Mule Network", status: "Sealed", is_sealed: true },
-  { id: 5, case_number: "FIR-2026-113", title: "Deepfake CEO Impersonation & Unauthorized Wire-Transfer Fraud", status: "Open", is_sealed: false },
-  { id: 6, case_number: "INC-2026/CYB/901", title: "Critical Infrastructure SCADA Network Intrusion & Sabotage", status: "Open", is_sealed: false },
+  {
+    id: 1,
+    case_number: "FIR-2026-402",
+    title: "Operation Cybershield — SIM Swap, Fake KYC & Multi-State Banking Mule Fraud",
+    status: "Open",
+    is_sealed: false,
+    created_at: "2026-03-14T18:30:00Z"
+  },
+  {
+    id: 2,
+    case_number: "INC-2026-518",
+    title: "Operation BlackByte — Corporate Cloud Ransomware & AWS S3 Exfiltration",
+    status: "Sealed",
+    is_sealed: true,
+    created_at: "2026-03-15T03:12:00Z"
+  }
 ];
 
 export default function CasesDashboard() {
@@ -118,15 +102,12 @@ export default function CasesDashboard() {
     try {
       const stored = JSON.parse(localStorage.getItem('case_metadata') || '{}');
       let changed = false;
+      // Sync to only active cases (remove legacy deleted case IDs 3,4,5,6)
+      const cleaned: Record<string, any> = {};
       for (const [idStr, meta] of Object.entries(DEFAULT_CASE_METADATA)) {
-        if (!stored[idStr] || !stored[idStr].crime_type) {
-          stored[idStr] = { ...(stored[idStr] || {}), ...meta };
-          changed = true;
-        }
+        cleaned[idStr] = stored[idStr] || meta;
       }
-      if (changed) {
-        localStorage.setItem('case_metadata', JSON.stringify(stored));
-      }
+      localStorage.setItem('case_metadata', JSON.stringify(cleaned));
     } catch (e) {
       console.error('Failed to initialize case_metadata', e);
     }
@@ -179,6 +160,26 @@ export default function CasesDashboard() {
     } catch (err) {
       console.warn('Backend unreachable, displaying offline/fallback cases:', err);
     }
+  };
+
+  const handleDeleteCase = async (caseId: number, caseNumber: string) => {
+    if (!confirm(`Are you sure you want to permanently delete case ${caseNumber}?`)) return;
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('sih_token') : null;
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      await fetch(`${apiUrl}/cases/${caseId}/`, {
+        method: 'DELETE',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+    } catch (err) {
+      console.warn('Backend delete error (offline):', err);
+    }
+    setCases(prev => prev.filter(x => x.id !== caseId));
+    try {
+      const stored = JSON.parse(localStorage.getItem('case_metadata') || '{}');
+      delete stored[String(caseId)];
+      localStorage.setItem('case_metadata', JSON.stringify(stored));
+    } catch {}
   };
 
   const toggleSection = (s: string) => {
@@ -387,7 +388,7 @@ export default function CasesDashboard() {
                               </div>
                               <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-400">
                                 <span className="flex items-center gap-1 text-[11px]">
-                                  <Calendar className="w-3 h-3 text-zinc-500" /> {new Date(c.created_at).toLocaleDateString()}
+                                  <Calendar className="w-3 h-3 text-zinc-500" /> {c.created_at && !isNaN(new Date(c.created_at).getTime()) ? new Date(c.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '14 Mar 2026'}
                                 </span>
                                 {meta?.crime_type && (
                                   <span className="flex items-center gap-1 text-[11px] bg-zinc-800/60 text-zinc-300 px-2 py-0.5 rounded border border-zinc-700/50">
@@ -398,8 +399,20 @@ export default function CasesDashboard() {
                             </div>
                           </div>
 
-                          {/* Action Arrow */}
-                          <div className="flex items-center gap-3 sm:pl-4 sm:border-l border-zinc-800 flex-shrink-0">
+                          {/* Actions: Delete & Open */}
+                          <div className="flex items-center gap-2 sm:pl-4 sm:border-l border-zinc-800 flex-shrink-0">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                handleDeleteCase(c.id, c.case_number);
+                              }}
+                              className="w-8 h-8 rounded-lg border border-zinc-700/60 bg-zinc-800/40 hover:bg-red-500/20 hover:border-red-500/50 text-zinc-400 hover:text-red-400 flex items-center justify-center transition-all flex-shrink-0"
+                              title="Delete Case Docket"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                             <span className="text-zinc-400 text-xs font-medium group-hover:text-white hidden sm:inline">
                               Open Case
                             </span>
