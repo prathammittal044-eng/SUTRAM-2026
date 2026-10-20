@@ -271,12 +271,12 @@ export default function ExhibitIntakeModal({
                 onChange={e => setArtifactType(e.target.value)}
                 className="w-full text-xs border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none font-medium bg-white"
               >
-                <option value="AUTO">Auto Detect Format</option>
-                <option value="DOCUMENT">Document / Legal FIR (.pdf, .docx)</option>
-                <option value="MOBILE_DB">Mobile SQLite DB (.sqlite, .db)</option>
-                <option value="NETWORK_LOG">Network & Firewall Logs (.csv, .log)</option>
-                <option value="CHAT_EXPORT">Chat Export (.txt, .json)</option>
-                <option value="MEDIA">Forensic Media / Receipt (.jpg, .png)</option>
+                <option value="AUTO">🔍 Auto Detect Format from Extension</option>
+                <option value="CHAT_EXPORT">📱 WhatsApp / Telegram Chat Export (.txt, .json)</option>
+                <option value="MEDIA">🖼️ Forensic Media & Images / Screen Captures (.jpg, .png, .webp)</option>
+                <option value="NETWORK_LOG">🌐 Network & Firewall Logs / Telecom CDR (.csv, .log)</option>
+                <option value="MOBILE_DB">💾 Mobile SQLite Extraction DB (.sqlite, .db)</option>
+                <option value="DOCUMENT">📄 FIR / Complaint / Legal Affidavit (.pdf, .docx)</option>
               </select>
             </div>
           </div>

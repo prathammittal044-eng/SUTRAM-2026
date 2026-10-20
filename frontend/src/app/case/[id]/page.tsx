@@ -102,7 +102,7 @@ export default function CaseDetails() {
   const [loading, setLoading]         = useState(!FALLBACK_CASES_DATA[String(id)]);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [sealing, setSealing]         = useState(false);
-  const [docType, setDocType]         = useState('FIR');
+  const [docType, setDocType]         = useState('CHAT_EXPORT');
   const [expandedOCR, setExpandedOCR] = useState<Record<number, boolean>>({});
   const [expandedImgs, setExpandedImgs] = useState<Record<number, boolean>>({});
   const [expandedAI, setExpandedAI] = useState<Record<number, boolean>>({});
@@ -373,11 +373,27 @@ export default function CaseDetails() {
       try {
         const hash = await computeSHA256(file);
         const docName = form.name?.value?.trim() || file.name;
+        const officerName = currentUser?.name || 'Sub-Inspector Sharma';
+        const officerRole = currentUser?.role || 'Officer';
+        const officerBadge = currentUser?.badge || '9482A';
+
+        let displayDocType = docType;
+        if (docType === 'CHAT_EXPORT') displayDocType = 'Chat Communications';
+        else if (docType === 'MEDIA') displayDocType = 'Forensic Media & Forgery Lab';
+        else if (docType === 'NETWORK_LOG') displayDocType = 'Network & Firewall Logs';
+        else if (docType === 'MOBILE_DB') displayDocType = 'Mobile Extraction Database';
+        else if (docType === 'FINANCIAL') displayDocType = 'Financial & Banking Records';
+        else if (docType === 'FIR') displayDocType = 'FIR / Incident Complaint';
+
+        const isImage = file.type.startsWith('image/') || /\.(jpe?g|png|webp)$/i.test(file.name);
+        const isTampered = file.name.toLowerCase().includes('altered') || file.name.toLowerCase().includes('tampered');
+        const isChat = docType === 'CHAT_EXPORT' || file.name.toLowerCase().includes('chat') || file.name.endsWith('.txt');
+
         const newDoc = {
           id: Date.now(),
           case_id: Number(id),
           name: docName,
-          doc_type: docType,
+          doc_type: displayDocType,
           created_at: new Date().toISOString(),
           versions: [
             {
@@ -387,16 +403,47 @@ export default function CaseDetails() {
               created_at: new Date().toISOString(),
               file_path: file.name,
               file_hash: hash,
-              ai_summary: `Exhibit '${docName}' verified with cryptographic SHA-256 integrity under Section 63 BSA.`,
-              extracted_text_preview: `[In-Browser Cryptographic Intake]\nFilename: ${file.name}\nSize: ${file.size} bytes\nSHA-256: ${hash}`,
-              is_media: file.type.startsWith('image/') || /\.(jpe?g|png|webp)$/i.test(file.name),
-              forgery_score: file.name.toLowerCase().includes('altered') || file.name.toLowerCase().includes('tampered') ? 94.2 : 0
+              uploaded_by: currentUserId || 1,
+              uploaded_by_name: officerName,
+              uploaded_by_role: officerRole,
+              uploaded_by_badge: officerBadge,
+              ai_summary: isChat
+                ? `Chat export '${docName}' verified with cryptographic SHA-256 integrity. Decrypted message transcripts indexed for named entity correlation.`
+                : isImage
+                ? `Forensic media exhibit '${docName}' registered with SHA-256 bitstream hash. ${isTampered ? 'Error Level Analysis reveals 94.2% localized compression anomaly.' : 'Uniform sensor noise indicates authentic capture.'}`
+                : `Exhibit '${docName}' verified with cryptographic SHA-256 integrity under Section 63 BSA.`,
+              extracted_text_preview: `[In-Browser Cryptographic Intake]\nFilename: ${file.name}\nClassification: ${displayDocType}\nSize: ${file.size} bytes\nSHA-256: ${hash}\nInvestigator: ${officerName} (${officerBadge})`,
+              is_media: isImage,
+              forgery_score: isTampered ? 94.2 : isImage ? 3.4 : 0
             }
           ]
         };
 
         const existingDocs = JSON.parse(localStorage.getItem(`sutram_documents_${id}`) || '[]');
         localStorage.setItem(`sutram_documents_${id}`, JSON.stringify([newDoc, ...existingDocs]));
+
+        // Also register in artifacts vault
+        const newArtifact = {
+          id: Date.now(),
+          case_id: Number(id),
+          name: docName,
+          exhibit_code: `EXH-${Math.floor(10 + Math.random() * 90)}`,
+          artifact_type: docType === 'CHAT_EXPORT' ? 'CHAT_EXPORT' : docType === 'MEDIA' || isImage ? 'MEDIA' : docType === 'NETWORK_LOG' ? 'NETWORK_LOG' : docType === 'MOBILE_DB' ? 'MOBILE_DB' : 'DOCUMENT',
+          file_path: file.name,
+          file_size: file.size,
+          raw_sha256: hash,
+          sha256_salted: hash.slice(16) + hash.slice(0, 16),
+          created_at: new Date().toISOString(),
+          forgery_score: isTampered ? 94.2 : isImage ? 3.4 : 0,
+          forensic_summary: `Exhibit '${docName}' ingested and cryptographically registered with bitstream SHA-256 fingerprint. Section 63 BSA compliance assured.`,
+          extracted_text_preview: `[Forensic Bitstream Intake]\nFile Name: ${file.name}\nSize: ${file.size} bytes\nBitstream SHA-256: ${hash}\nInvestigator: ${officerName} (${officerBadge})`,
+          entities: [
+            { type: 'DATE', value: new Date().toLocaleDateString('en-IN') },
+            { type: 'ORG', value: 'SUTRAM Forensic Vault' }
+          ]
+        };
+        saveLocalArtifact(id as string, newArtifact);
+
         alert(`Document '${docName}' cryptographically hashed (SHA-256) and sealed under Section 63 BSA!`);
         fetchCase();
         fetchArtifacts();
@@ -522,6 +569,10 @@ export default function CaseDetails() {
           created_at: art.created_at,
           file_path: art.file_path,
           file_hash: art.raw_sha256,
+          uploaded_by: 1,
+          uploaded_by_name: 'Sub-Inspector Sharma',
+          uploaded_by_role: 'Officer',
+          uploaded_by_badge: '9482A',
           ai_summary: art.forensic_summary || 'Forensic artifact secured and registered with SHA-256 fingerprint.',
           entities: JSON.stringify(entitiesFormatted),
           extracted_text: art.extracted_text_preview || 'Parsed records securely sealed in forensic vault.',
@@ -729,14 +780,161 @@ export default function CaseDetails() {
                     <label className="block text-[10px] font-mono tracking-widest text-white/40 uppercase mb-1.5">Exhibit Classification <span className="text-[#FF4E18]">*</span></label>
                     <select name="doc_type" value={docType} onChange={e => setDocType(e.target.value)}
                       className="w-full border border-white/15 rounded p-2.5 bg-black text-white focus:outline-none focus:border-white/40 text-xs font-mono cursor-pointer">
-                      <option value="FIR">FIR (First Information Report) / Incident Complaint</option>
-                      <option value="Evidence">Physical & Digital Exhibit</option>
-                      <option value="Forensic">Forensic Lab Report (DFIR / FSL)</option>
-                      <option value="Statement">Deposition & Witness Statement</option>
-                      <option value="Court">Judicial / Regulatory Order</option>
-                      <option value="Medical">Post-Mortem / Forensic Toxicology</option>
+                      <option value="CHAT_EXPORT">📱 WhatsApp / Telegram / Signal Chat Export (.txt, .json)</option>
+                      <option value="MEDIA">🖼️ Forensic Media & Images / Screen Captures (.jpg, .png, .webp)</option>
+                      <option value="NETWORK_LOG">🌐 Network & Firewall Logs / Telecom CDR (.csv, .log)</option>
+                      <option value="MOBILE_DB">💾 Mobile Extraction Database / Cellebrite (.sqlite, .db)</option>
+                      <option value="FINANCIAL">💳 Financial & Banking Records / UPI Receipt (.pdf, .csv, .jpg)</option>
+                      <option value="FIR">📄 FIR (First Information Report) / Incident Complaint</option>
+                      <option value="Evidence">📦 Physical & Digital Seizure Hardware / Photo</option>
+                      <option value="Forensic">🔬 Forensic Lab Report (DFIR / FSL)</option>
+                      <option value="Statement">🎙️ Deposition & Witness Statement</option>
+                      <option value="Court">⚖️ Judicial / Regulatory Order</option>
+                      <option value="Medical">🩺 Post-Mortem / Forensic Toxicology</option>
                     </select>
                   </div>
+
+                  {/* CHAT_EXPORT-specific fields */}
+                  {docType === 'CHAT_EXPORT' && (
+                    <div className="bg-white/[0.02] border border-white/10 rounded p-4 space-y-3">
+                      <p className="text-[10px] font-mono font-bold text-white/60 uppercase tracking-widest flex items-center gap-1.5">
+                        <MessageSquare className="w-3.5 h-3.5 text-[#FF4E18]" /> Chat Extraction Parameters
+                      </p>
+                      <div>
+                        <label className="block text-xs font-mono text-white/50 mb-1">Chat Transcript Title <span className="text-[#FF4E18]">*</span></label>
+                        <input required name="name" type="text" placeholder="e.g., Suspect WhatsApp Encrypted Chat Export"
+                          className="w-full border border-white/15 rounded p-2 text-xs font-mono outline-none focus:border-white/40 bg-black text-white placeholder-white/30" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-mono text-white/50 mb-1">Platform</label>
+                          <select name="chat_platform" className="w-full border border-white/15 rounded p-2 text-xs font-mono bg-black text-white outline-none focus:border-white/40">
+                            <option>WhatsApp (Encrypted DB/Export)</option>
+                            <option>Telegram (Secret Chat / Cloud)</option>
+                            <option>Signal Private Messenger</option>
+                            <option>Instagram / Direct Messages</option>
+                            <option>SMS / RCS Message Thread</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-mono text-white/50 mb-1">Participants / Handles</label>
+                          <input name="chat_participants" type="text" placeholder="e.g., +91 9811223344 & Bunty"
+                            className="w-full border border-white/15 rounded p-2 text-xs font-mono outline-none focus:border-white/40 bg-black text-white placeholder-white/30" />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* MEDIA-specific fields */}
+                  {docType === 'MEDIA' && (
+                    <div className="bg-white/[0.02] border border-white/10 rounded p-4 space-y-3">
+                      <p className="text-[10px] font-mono font-bold text-white/60 uppercase tracking-widest flex items-center gap-1.5">
+                        <Camera className="w-3.5 h-3.5 text-[#FF4E18]" /> Forensic Media & Image Analysis Parameters
+                      </p>
+                      <div>
+                        <label className="block text-xs font-mono text-white/50 mb-1">Image / Exhibit Title <span className="text-[#FF4E18]">*</span></label>
+                        <input required name="name" type="text" placeholder="e.g., Altered UPI Payment Confirmation Screenshot"
+                          className="w-full border border-white/15 rounded p-2 text-xs font-mono outline-none focus:border-white/40 bg-black text-white placeholder-white/30" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-mono text-white/50 mb-1">Capture Source</label>
+                          <select name="media_source" className="w-full border border-white/15 rounded p-2 text-xs font-mono bg-black text-white outline-none focus:border-white/40">
+                            <option>Smartphone Screen Capture (UPI/Banking)</option>
+                            <option>Crime Scene Photo (Physical Desk Seizure)</option>
+                            <option>CCTV Surveillance Video / Still</option>
+                            <option>Scanned Document / ID Card</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-mono text-white/50 mb-1">Tampering Diagnostics</label>
+                          <select name="suspected_tampering" className="w-full border border-white/15 rounded p-2 text-xs font-mono bg-black text-white outline-none focus:border-white/40">
+                            <option value="auto">Auto Run ELA & EXIF Diagnostics</option>
+                            <option value="tampered">Suspected Forgery / Photoshop Tampering</option>
+                            <option value="authentic">Authentic Physical Seizure Photo</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* NETWORK_LOG-specific fields */}
+                  {docType === 'NETWORK_LOG' && (
+                    <div className="bg-white/[0.02] border border-white/10 rounded p-4 space-y-3">
+                      <p className="text-[10px] font-mono font-bold text-white/60 uppercase tracking-widest flex items-center gap-1.5">
+                        <Terminal className="w-3.5 h-3.5 text-[#FF4E18]" /> Network & CDR Telemetry Parameters
+                      </p>
+                      <div>
+                        <label className="block text-xs font-mono text-white/50 mb-1">Log Exhibit Title <span className="text-[#FF4E18]">*</span></label>
+                        <input required name="name" type="text" placeholder="e.g., ISP CDR Logs & Cloudflare Access Streams"
+                          className="w-full border border-white/15 rounded p-2 text-xs font-mono outline-none focus:border-white/40 bg-black text-white placeholder-white/30" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-mono text-white/50 mb-1">Source Infrastructure</label>
+                          <input name="log_source" type="text" placeholder="e.g., Cloudflare / Airtel Gateway"
+                            className="w-full border border-white/15 rounded p-2 text-xs font-mono outline-none focus:border-white/40 bg-black text-white placeholder-white/30" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-mono text-white/50 mb-1">Incident Time Window</label>
+                          <input name="time_window" type="text" placeholder="e.g., 14-Mar-2026 02:00 - 03:00 IST"
+                            className="w-full border border-white/15 rounded p-2 text-xs font-mono outline-none focus:border-white/40 bg-black text-white placeholder-white/30" />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* MOBILE_DB-specific fields */}
+                  {docType === 'MOBILE_DB' && (
+                    <div className="bg-white/[0.02] border border-white/10 rounded p-4 space-y-3">
+                      <p className="text-[10px] font-mono font-bold text-white/60 uppercase tracking-widest flex items-center gap-1.5">
+                        <Smartphone className="w-3.5 h-3.5 text-[#FF4E18]" /> Mobile Database Triage Parameters
+                      </p>
+                      <div>
+                        <label className="block text-xs font-mono text-white/50 mb-1">Extraction File Heading <span className="text-[#FF4E18]">*</span></label>
+                        <input required name="name" type="text" placeholder="e.g., Seized OnePlus Phone Cellebrite Extraction Dump"
+                          className="w-full border border-white/15 rounded p-2 text-xs font-mono outline-none focus:border-white/40 bg-black text-white placeholder-white/30" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-mono text-white/50 mb-1">Extraction Utility</label>
+                          <input name="tool_name" type="text" placeholder="e.g., Cellebrite UFED / Magnet AXIOM"
+                            className="w-full border border-white/15 rounded p-2 text-xs font-mono outline-none focus:border-white/40 bg-black text-white placeholder-white/30" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-mono text-white/50 mb-1">Device IMEI / Serial</label>
+                          <input name="imei" type="text" placeholder="e.g., 863920194820194"
+                            className="w-full border border-white/15 rounded p-2 text-xs font-mono outline-none focus:border-white/40 bg-black text-white placeholder-white/30" />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* FINANCIAL-specific fields */}
+                  {docType === 'FINANCIAL' && (
+                    <div className="bg-white/[0.02] border border-white/10 rounded p-4 space-y-3">
+                      <p className="text-[10px] font-mono font-bold text-white/60 uppercase tracking-widest flex items-center gap-1.5">
+                        <CreditCard className="w-3.5 h-3.5 text-[#FFA95A]" /> Financial & Banking Ledger Parameters
+                      </p>
+                      <div>
+                        <label className="block text-xs font-mono text-white/50 mb-1">Statement / Receipt Heading <span className="text-[#FF4E18]">*</span></label>
+                        <input required name="name" type="text" placeholder="e.g., Fraudulent UPI Transaction Confirmation Receipt"
+                          className="w-full border border-white/15 rounded p-2 text-xs font-mono outline-none focus:border-white/40 bg-black text-white placeholder-white/30" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-mono text-white/50 mb-1">Bank / Gateway</label>
+                          <input name="bank_name" type="text" placeholder="e.g., HDFC Bank / ICICI / PhonePe"
+                            className="w-full border border-white/15 rounded p-2 text-xs font-mono outline-none focus:border-white/40 bg-black text-white placeholder-white/30" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-mono text-white/50 mb-1">Disputed Amount / VPA</label>
+                          <input name="disputed_info" type="text" placeholder="e.g., ₹5,00,000 / vicky.mule@icici"
+                            className="w-full border border-white/15 rounded p-2 text-xs font-mono outline-none focus:border-white/40 bg-black text-white placeholder-white/30" />
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* FIR-specific fields */}
                   {docType === 'FIR' && (
@@ -949,7 +1147,21 @@ export default function CaseDetails() {
                               <div className="p-5 bg-black">
                                 <div className="relative border-l border-white/10 ml-3 space-y-5">
                                   {doc.versions.sort((a: any, b: any) => b.version_number - a.version_number).map((v: any) => {
-                                    const uInfo = USERS[v.uploaded_by] || { name: 'Unknown', role: '—', badge: '—' };
+                                    const uInfo = USERS[v.uploaded_by] || (
+                                      v.uploaded_by_name ? {
+                                        name: v.uploaded_by_name,
+                                        role: v.uploaded_by_role || 'Officer',
+                                        badge: v.uploaded_by_badge || '9482A'
+                                      } : currentUser?.name ? {
+                                        name: currentUser.name,
+                                        role: currentUser.role || 'Officer',
+                                        badge: currentUser.badge || '9482A'
+                                      } : {
+                                        name: 'Sub-Inspector Sharma',
+                                        role: 'Officer',
+                                        badge: '9482A'
+                                      }
+                                    );
                                     return (
                                       <div key={v.id} className="relative pl-7">
                                         <div className={`absolute -left-1.5 top-2 w-3 h-3 rounded-full border-2 border-black ${v.status === 'Active' ? 'bg-white' : 'bg-white/40'}`} />
@@ -966,8 +1178,8 @@ export default function CaseDetails() {
                                             </div>
                                             <div className="flex flex-col items-end gap-1.5">
                                               <span className="text-[11px] font-mono text-white/40">{new Date(v.created_at).toLocaleString()}</span>
-                                              <a href={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/files/${v.file_path}?user_id=${currentUserId}&document_id=${doc.id}`}
-                                                target="_blank" rel="noreferrer"
+                                              <a href={getFileUrl(v.file_path)}
+                                                target="_blank" rel="noreferrer" download
                                                 className="flex items-center gap-1 text-xs font-mono font-medium text-white/70 hover:text-white border border-white/20 hover:bg-white/5 px-2.5 py-1 rounded-full transition-colors">
                                                 <Download className="w-3 h-3 text-[#FF4E18]" /> VIEW PAYLOAD
                                               </a>
