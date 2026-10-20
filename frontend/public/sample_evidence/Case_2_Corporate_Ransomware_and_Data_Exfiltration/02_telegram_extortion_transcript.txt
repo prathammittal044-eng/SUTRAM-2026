@@ -1,0 +1,12 @@
+[15/03/2026, 03:12:45] CipherPhantom: Hello Arjun. This is BlackByte Ransomware group. I know you are CISO at +91 9845012345.
+[15/03/2026, 03:13:20] Arjun Menon: Who is this? Why are our production Aurora databases inaccessible?
+[15/03/2026, 03:14:05] CipherPhantom: Your AWS infrastructure is completely compromised from our proxy 185.220.101.5. We encrypted 18 core EC2 instances and all your customer databases.
+[15/03/2026, 03:15:18] CipherPhantom: More importantly, we exfiltrated 45.2 GB of unencrypted customer KYC records from your S3 bucket 'payvance-customer-kyc-prod'. That is 210,000 Aadhaar cards, PAN cards, and bank account statements.
+[15/03/2026, 03:16:40] Arjun Menon: What do you want? Do not publish any customer data.
+[15/03/2026, 03:17:35] CipherPhantom: You have 48 hours to pay 5.0 Bitcoin (BTC) to our official wallet: bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh
+[15/03/2026, 03:18:50] CipherPhantom: Proof of possession has been uploaded to our Tor leak mirror: http://blackbyte5exfil2026onion.onion/proofs/payvance_sample.tar.gz
+[15/03/2026, 03:20:12] Arjun Menon: 5 BTC is $340,000 USD. We cannot arrange this instantly without board approval. Give us 72 hours and provide proof of decryptor.
+[15/03/2026, 03:22:00] CipherPhantom: Timer has started. Exactly 48 hours. If timer reaches 0, the entire database goes to BreachedForums and DarkWeb mirrors.
+[15/03/2026, 03:23:44] CipherPhantom: Send 0.1 BTC test transaction to bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh and we will decrypt 1 test host to prove our key works.
+[15/03/2026, 03:25:10] Arjun Menon: Our team is evaluating. Do not delete the decryption keys.
+[15/03/2026, 03:26:00] CipherPhantom: Clock is ticking. No police, no CERT-In. If you contact authorities, data leaks immediately.

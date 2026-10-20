@@ -5,6 +5,7 @@ import {
   Terminal, MessageSquare, Database, FileText, ExternalLink,
   Phone, CreditCard, Globe, Mail, User, Layers, Info
 } from 'lucide-react';
+import { getFileUrl } from '@/lib/clientForensics';
 
 interface ExhibitInspectorModalProps {
   artifact: any;
@@ -23,7 +24,7 @@ export default function ExhibitInspectorModal({
   if (!artifact) return null;
 
   const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-  const fileUrl = `${API}/files/${artifact.file_path}`;
+  const fileUrl = getFileUrl(artifact.file_path);
 
   const handleCopyHash = () => {
     navigator.clipboard.writeText(artifact.raw_sha256);

@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { ShieldAlert, AlertTriangle, CheckCircle, ExternalLink, MapPin, Camera, Laptop, X, Eye } from 'lucide-react';
+import { getFileUrl } from '@/lib/clientForensics';
 
 interface ForgeryModalProps {
   artifact: any;
@@ -24,8 +25,8 @@ export default function ForgeryModal({ artifact, onClose }: ForgeryModalProps) {
   const isTampered = tamperScore >= 45.0;
 
   const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-  const originalUrl = `${API}/files/${artifact.file_path}`;
-  const elaUrl = fDetails.ela_image_file ? `${API}/files/${fDetails.ela_image_file}` : null;
+  const originalUrl = getFileUrl(artifact.file_path);
+  const elaUrl = fDetails.ela_image_file ? getFileUrl(fDetails.ela_image_file) : null;
 
   return (
     <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">

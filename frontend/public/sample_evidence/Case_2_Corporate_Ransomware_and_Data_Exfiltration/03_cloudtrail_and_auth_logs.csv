@@ -1,0 +1,13 @@
+timestamp,source_ip,destination_ip,username,action,status,protocol,event_type
+2026-03-15T01:30:00Z,14.143.40.22,10.0.0.1,devops_internal,ConsoleLogin - MFA Successful,200 SUCCESS,HTTPS,AWS_CONSOLE
+2026-03-15T01:42:10Z,185.220.101.5,10.0.0.1,devops_service_acc,IAM:CreateAccessKey [Target: devops_service_acc],200 SUCCESS,AWS_API,PRIVILEGE_ESCALATION
+2026-03-15T01:45:15Z,185.220.101.5,10.0.0.1,devops_service_acc,IAM:AttachUserPolicy [AdministratorAccess],200 SUCCESS,AWS_API,PRIVILEGE_ESCALATION
+2026-03-15T02:00:22Z,185.220.101.5,10.0.2.14,devops_service_acc,KMS:Decrypt [CustomerDataKey],403 AccessDenied,AWS_API,BRUTE_FORCE
+2026-03-15T02:02:40Z,185.220.101.5,10.0.2.14,devops_service_acc,KMS:Decrypt [CustomerDataKey],403 AccessDenied,AWS_API,BRUTE_FORCE
+2026-03-15T02:15:33Z,10.0.4.15,10.0.8.20,root_bastion,S3:GetObject [s3://payvance-customer-kyc-prod/export_2026.tar.gz],200 SUCCESS,AWS_API,DATA_EXFILTRATION
+2026-03-15T02:28:10Z,10.0.4.15,185.220.101.5,root_bastion,SCP / RSync Transfer 45.2 GB via Port 2222,200 SUCCESS,SSH,DATA_EXFILTRATION
+2026-03-15T02:48:19Z,185.220.101.5,10.0.0.1,devops_service_acc,RDS:DeleteDBClusterSnapshot [aurora-prod-backup],200 SUCCESS,AWS_API,DEFENSIVE_EVASION
+2026-03-15T03:01:00Z,10.0.4.15,10.0.4.50,powershell.exe,Invoke-Expression -Command BlackByte.exe -target C:\Data,CRITICAL_EXECUTION,WMI,RANSOMWARE_ENCRYPT
+2026-03-15T03:05:12Z,10.0.4.15,10.0.4.51,powershell.exe,Drop README: BLACKBYTE_README.txt with wallet bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh,CRITICAL_DROP,SMB,RANSOM_NOTE
+2026-03-15T03:12:00Z,10.0.0.1,10.0.0.200,soc_guardduty,GuardDuty Finding: UnauthorizedAccess:IAMUser/TorIPCaller,CRITICAL_ALERT,AWS_SECURITY,SOC_DETECTION
+2026-03-15T03:15:30Z,14.143.40.22,10.0.0.1,arjun.menon,Emergency Revoke IAM Credentials & Isolate VPC,200 SUCCESS,AWS_CLI,INCIDENT_CONTAINMENT
